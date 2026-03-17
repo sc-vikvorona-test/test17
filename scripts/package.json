@@ -1,0 +1,21 @@
+{
+  "name": "benchmark-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "setup-prs": "tsx setup-prs.ts",
+    "wait-for-checks": "tsx wait-for-checks.ts",
+    "evaluate": "tsx evaluate.ts",
+    "report": "tsx report-github.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/rest": "^21.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

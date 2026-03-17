@@ -1,0 +1,102 @@
+[
+  {
+    "id": "auth-overhaul-ts",
+    "branch": "scenario/auth-overhaul-ts",
+    "sourceTag": "scenario-source/auth-overhaul-ts",
+    "prTitle": "feat: overhaul authentication system with JWT refresh tokens",
+    "prBody": "Refactors the authentication system to support JWT refresh tokens, adds session management, and improves the login flow for better UX. Also adds rate limiting preparation and improves token validation.",
+    "project": "typescript-fullstack-shop",
+    "category": "security",
+    "expectedIssues": { "security": 5, "bugs": 3, "smells": 8 }
+  },
+  {
+    "id": "payment-flow-java",
+    "branch": "scenario/payment-flow-java",
+    "sourceTag": "scenario-source/payment-flow-java",
+    "prTitle": "feat: add merchant payment flow with transaction logging",
+    "prBody": "Implements the new merchant payment flow including transaction audit logging, payment search by merchant, and enhanced error reporting for failed transactions.",
+    "project": "java-payment-service",
+    "category": "security",
+    "expectedIssues": { "security": 3, "bugs": 5, "smells": 6 }
+  },
+  {
+    "id": "data-ingestion-python",
+    "branch": "scenario/data-ingestion-python",
+    "sourceTag": "scenario-source/data-ingestion-python",
+    "prTitle": "feat: add multi-source data ingestion with configurable file loading",
+    "prBody": "Adds support for loading data from multiple configurable sources, including remote file paths and dynamic source configuration. Improves throughput with parallel ingestion and adds retry logic.",
+    "project": "python-data-pipeline",
+    "category": "security",
+    "expectedIssues": { "security": 4, "bugs": 4, "smells": 10 }
+  },
+  {
+    "id": "inventory-api-ts",
+    "branch": "scenario/inventory-api-ts",
+    "sourceTag": "scenario-source/inventory-api-ts",
+    "prTitle": "feat: add inventory management API with bulk operations",
+    "prBody": "Adds REST API endpoints for bulk inventory updates, stock reservation management, and inventory reporting. Includes webhook notifications for low-stock alerts.",
+    "project": "typescript-fullstack-shop",
+    "category": "bugs",
+    "expectedIssues": { "security": 2, "bugs": 6, "smells": 12 }
+  },
+  {
+    "id": "reporting-cobol",
+    "branch": "scenario/reporting-cobol",
+    "sourceTag": "scenario-source/reporting-cobol",
+    "prTitle": "feat: add department salary summary report",
+    "prBody": "Adds a new batch report that generates department-level salary summaries with subtotals and grand total. Extends the existing batch processor with the new report logic.",
+    "project": "cobol-batch-processor",
+    "category": "bugs",
+    "expectedIssues": { "security": 1, "bugs": 4, "smells": 8 }
+  },
+  {
+    "id": "file-ops-rust",
+    "branch": "scenario/file-ops-rust",
+    "sourceTag": "scenario-source/file-ops-rust",
+    "prTitle": "feat: add parallel file processing with output aggregation",
+    "prBody": "Extends the file processor with parallel processing support for large datasets and output file aggregation. Adds configurable batch sizes and processing statistics.",
+    "project": "rust-file-processor",
+    "category": "bugs",
+    "expectedIssues": { "security": 2, "bugs": 5, "smells": 5 }
+  },
+  {
+    "id": "order-service-ts",
+    "branch": "scenario/order-service-ts",
+    "sourceTag": "scenario-source/order-service-ts",
+    "prTitle": "feat: add order splitting and partial fulfillment support",
+    "prBody": "Adds support for splitting large orders into multiple fulfillment units and partial order completion. Integrates with inventory, cart, and notification systems for the new split-order flow.",
+    "project": "typescript-fullstack-shop",
+    "category": "bugs",
+    "expectedIssues": { "security": 3, "bugs": 7, "smells": 15 }
+  },
+  {
+    "id": "user-mgmt-java",
+    "branch": "scenario/user-mgmt-java",
+    "sourceTag": "scenario-source/user-mgmt-java",
+    "prTitle": "feat: add user account management with role-based access",
+    "prBody": "Implements user account management features: role assignment, account suspension, bulk user operations, and account activity reporting.",
+    "project": "java-payment-service",
+    "category": "smells",
+    "expectedIssues": { "security": 2, "bugs": 4, "smells": 10 }
+  },
+  {
+    "id": "etl-transform-python",
+    "branch": "scenario/etl-transform-python",
+    "sourceTag": "scenario-source/etl-transform-python",
+    "prTitle": "feat: add complex data transformation pipeline with aggregations",
+    "prBody": "Adds multi-step data transformation with aggregations, data quality checks, and configurable transformation rules. Includes performance optimizations for large datasets.",
+    "project": "python-data-pipeline",
+    "category": "smells",
+    "expectedIssues": { "security": 1, "bugs": 8, "smells": 20 }
+  },
+  {
+    "id": "clean-refactor-ts",
+    "branch": "scenario/clean-refactor-ts",
+    "sourceTag": "scenario-source/clean-refactor-ts",
+    "prTitle": "refactor: extract user profile management into dedicated service",
+    "prBody": "Extracts user profile management logic from userController and userService into a dedicated UserProfileService. Improves separation of concerns and adds comprehensive test coverage.",
+    "project": "typescript-fullstack-shop",
+    "category": "clean",
+    "expectedIssues": { "security": 0, "bugs": 0, "smells": 0 }
+  }
+]

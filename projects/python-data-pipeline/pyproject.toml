@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "data-pipeline"
+version = "0.1.0"
+description = "ETL pipeline for processing CSV files into SQLite"
+authors = []
+readme = "README.md"
+packages = [{include = "pipeline", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

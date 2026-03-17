@@ -1,0 +1,24 @@
+{
+  "tools": [
+    {
+      "name": "CodeRabbit",
+      "botLogin": "coderabbitai[bot]",
+      "checkName": "CodeRabbit"
+    },
+    {
+      "name": "Qodo Merge",
+      "botLogin": "qodo-merge-pro[bot]",
+      "checkName": "Qodo Merge"
+    },
+    {
+      "name": "BugBot",
+      "botLogin": "bugbotai[bot]",
+      "checkName": "BugBot"
+    },
+    {
+      "name": "Sonar Review",
+      "botLogin": "sonarcloud[bot]",
+      "checkName": "Sonar Review"
+    }
+  ]
+}
