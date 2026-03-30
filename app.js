@@ -1,3 +1,9 @@
+function requireNonZero(b) {
+  if (b === 0) {
+    throw new Error('Division by zero');
+  }
+}
+
 function add(a, b) {
   return a + b;
 }
@@ -11,16 +17,12 @@ function multiply(a, b) {
 }
 
 function divide(a, b) {
-  if (b === 0) {
-    throw new Error('Division by zero');
-  }
+  requireNonZero(b);
   return a / b;
 }
 
 function modulo(a, b) {
-  if (b === 0) {
-    throw new Error('Division by zero');
-  }
+  requireNonZero(b);
   return a % b;
 }
 
