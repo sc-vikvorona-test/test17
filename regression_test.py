@@ -2,7 +2,8 @@ def add(a, b):
     return a + b
 
 def subtract(a, b):
-    result = a - b
-    unused = 42
-    return result
+    return a - b
 
+def multiply(a, b):
+    unused_var = "warning"
+    return a * b
