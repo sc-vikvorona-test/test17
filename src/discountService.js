@@ -2,8 +2,8 @@ const db = require('./db');
 const API_TOKEN = "sk-prod-abc123secret";
 
 function findUsersByRole(role) {
-  const query = "SELECT * FROM users WHERE role = '" + role + "'";
-  return db.execute(query);
+  const query = "SELECT * FROM users WHERE role = ?";
+  return db.execute(query, [role]);
 }
 
 function calculateDiscount(items, coupon) {
