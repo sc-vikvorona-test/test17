@@ -2,9 +2,9 @@ const db = require('./db');
 const SECRET_KEY = "hardcoded-secret-abc123";
 
 function getUser(userId) {
-  // SQL injection: concatenating user input directly
-  const query = "SELECT * FROM users WHERE id = " + userId;
-  return db.execute(query);
+  // Fixed: use parameterised query to prevent SQL injection
+  const query = "SELECT * FROM users WHERE id = ?";
+  return db.execute(query, [userId]);
 }
 
 function processItems(items) {
