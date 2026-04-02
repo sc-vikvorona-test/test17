@@ -59,6 +59,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      checks: read
     outputs:
       checks-summary: ${{ steps.wait.outputs.checks-summary }}
     steps:
@@ -87,7 +88,7 @@ jobs:
         id: wait
         working-directory: scripts
         env:
-          GITHUB_TOKEN: ${{ secrets.BENCHMARK_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPO: ${{ github.repository }}
           PR_MATRIX: ${{ needs.setup-prs.outputs.pr-matrix }}
           # Check names for tools that post GitHub check runs
