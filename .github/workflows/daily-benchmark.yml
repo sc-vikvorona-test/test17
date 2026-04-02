@@ -12,14 +12,15 @@ concurrency:
 jobs:
   setup-prs:
     name: Setup scenario PRs
-    runs-on: ubuntu-latest
+    runs-on: sonar-xs
     permissions:
+      id-token: write
       contents: write
       pull-requests: write
     outputs:
       pr-matrix: ${{ steps.setup.outputs.pr-matrix }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
           token: ${{ secrets.BENCHMARK_GITHUB_TOKEN }}
@@ -30,9 +31,18 @@ jobs:
           cache: 'npm'
           cache-dependency-path: scripts/package-lock.json
 
+      - name: Fetch Artifactory token
+        id: secrets
+        uses: SonarSource/vault-action-wrapper@v3
+        with:
+          secrets: |
+            development/artifactory/token/{REPO_OWNER_NAME_DASH}-private-reader access_token | ARTIFACTORY_TOKEN;
+
       - name: Install dependencies
-        run: npm ci
         working-directory: scripts
+        run: |
+          echo "//repox.jfrog.io/:_authToken=${{ fromJSON(steps.secrets.outputs.vault).ARTIFACTORY_TOKEN }}" >> ~/.npmrc
+          npm ci
 
       - name: Force-push scenario branches and open PRs
         id: setup
@@ -45,11 +55,14 @@ jobs:
   wait-for-checks:
     name: Wait for tool checks
     needs: setup-prs
-    runs-on: ubuntu-latest
+    runs-on: sonar-xs
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       checks-summary: ${{ steps.wait.outputs.checks-summary }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
         with:
@@ -57,9 +70,18 @@ jobs:
           cache: 'npm'
           cache-dependency-path: scripts/package-lock.json
 
+      - name: Fetch Artifactory token
+        id: secrets
+        uses: SonarSource/vault-action-wrapper@v3
+        with:
+          secrets: |
+            development/artifactory/token/{REPO_OWNER_NAME_DASH}-private-reader access_token | ARTIFACTORY_TOKEN;
+
       - name: Install dependencies
-        run: npm ci
         working-directory: scripts
+        run: |
+          echo "//repox.jfrog.io/:_authToken=${{ fromJSON(steps.secrets.outputs.vault).ARTIFACTORY_TOKEN }}" >> ~/.npmrc
+          npm ci
 
       - name: Poll GitHub Checks API until all tools complete
         id: wait
@@ -68,7 +90,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.BENCHMARK_GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
           PR_MATRIX: ${{ needs.setup-prs.outputs.pr-matrix }}
-          EXPECTED_CHECKS: ${{ vars.EXPECTED_CHECKS || 'CodeRabbit,Qodo Merge,BugBot,Sonar Review' }}
+          # Check names for tools that post GitHub check runs
+          EXPECTED_CHECKS: ${{ vars.EXPECTED_CHECKS || 'Sonar Review,Claude Code Review,Cursor Bugbot' }}
           POLL_INTERVAL_SECONDS: '30'
           TIMEOUT_SECONDS: '7200'
         run: npx tsx wait-for-checks.ts
@@ -76,11 +99,14 @@ jobs:
   evaluate:
     name: Evaluate with Claude
     needs: [setup-prs, wait-for-checks]
-    runs-on: ubuntu-latest
+    runs-on: sonar-xs
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       evaluation-json: ${{ steps.evaluate.outputs.evaluation-json }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
         with:
@@ -88,9 +114,18 @@ jobs:
           cache: 'npm'
           cache-dependency-path: scripts/package-lock.json
 
+      - name: Fetch Artifactory token
+        id: secrets
+        uses: SonarSource/vault-action-wrapper@v3
+        with:
+          secrets: |
+            development/artifactory/token/{REPO_OWNER_NAME_DASH}-private-reader access_token | ARTIFACTORY_TOKEN;
+
       - name: Install dependencies
-        run: npm ci
         working-directory: scripts
+        run: |
+          echo "//repox.jfrog.io/:_authToken=${{ fromJSON(steps.secrets.outputs.vault).ARTIFACTORY_TOKEN }}" >> ~/.npmrc
+          npm ci
 
       - name: Run Claude evaluation
         id: evaluate
@@ -112,14 +147,15 @@ jobs:
           retention-days: 30
 
   report:
-    name: Create GitHub Issue report
+    name: Post Slack report
     needs: [setup-prs, evaluate]
-    runs-on: ubuntu-latest
+    runs-on: sonar-xs
     if: always()
     permissions:
-      issues: write
+      id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
         with:
@@ -127,9 +163,19 @@ jobs:
           cache: 'npm'
           cache-dependency-path: scripts/package-lock.json
 
+      - name: Fetch secrets
+        id: secrets
+        uses: SonarSource/vault-action-wrapper@v3
+        with:
+          secrets: |
+            development/artifactory/token/{REPO_OWNER_NAME_DASH}-private-reader access_token | ARTIFACTORY_TOKEN;
+            development/kv/data/slack token | SLACK_TOKEN;
+
       - name: Install dependencies
-        run: npm ci
         working-directory: scripts
+        run: |
+          echo "//repox.jfrog.io/:_authToken=${{ fromJSON(steps.secrets.outputs.vault).ARTIFACTORY_TOKEN }}" >> ~/.npmrc
+          npm ci
 
       - name: Download evaluation artifact
         uses: actions/download-artifact@fa0a91b85d4f404e444306234b73310d11984c78
@@ -138,12 +184,12 @@ jobs:
           path: /tmp
         continue-on-error: true
 
-      - name: Create GitHub Issue report
+      - name: Post Slack report
         working-directory: scripts
         env:
-          GITHUB_TOKEN: ${{ secrets.BENCHMARK_GITHUB_TOKEN }}
-          GITHUB_REPO: ${{ github.repository }}
+          SLACK_TOKEN: ${{ fromJSON(steps.secrets.outputs.vault).SLACK_TOKEN }}
+          SLACK_CHANNEL: '#code-review-benchmark-reports'
           PR_MATRIX: ${{ needs.setup-prs.outputs.pr-matrix }}
           EVALUATION_JSON: ${{ needs.evaluate.outputs.evaluation-json }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: npx tsx report-github.ts
+        run: npx tsx report-slack.ts

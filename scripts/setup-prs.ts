@@ -1,10 +1,12 @@
 import { Octokit } from "@octokit/rest";
-import { readFileSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import "dotenv/config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const HTTP_UNPROCESSABLE_ENTITY = 422;
 
 function required(name: string): string {
   const value = process.env[name];
@@ -69,7 +71,7 @@ async function forcePushBranch(
       force: true,
     });
   } catch (err: unknown) {
-    if ((err as { status?: number }).status === 422) {
+    if ((err as { status?: number }).status === HTTP_UNPROCESSABLE_ENTITY) {
       await octokit.git.createRef({
         owner,
         repo,
@@ -109,7 +111,19 @@ async function setupPr(
   let prNumber: number;
   let prUrl: string;
 
-  if (existingPr !== null) {
+  if (existingPr === null) {
+    const { data } = await octokit.pulls.create({
+      owner,
+      repo,
+      title: scenario.prTitle,
+      body: scenario.prBody,
+      head: scenario.branch,
+      base: "master",
+    });
+    prNumber = data.number;
+    prUrl = data.html_url;
+    console.log(`Created PR #${prNumber} for ${scenario.id}`);
+  } else {
     const { data } = await octokit.pulls.update({
       owner,
       repo,
@@ -120,18 +134,6 @@ async function setupPr(
     prNumber = data.number;
     prUrl = data.html_url;
     console.log(`Updated existing PR #${prNumber} for ${scenario.id}`);
-  } else {
-    const { data } = await octokit.pulls.create({
-      owner,
-      repo,
-      title: scenario.prTitle,
-      body: scenario.prBody,
-      head: scenario.branch,
-      base: "main",
-    });
-    prNumber = data.number;
-    prUrl = data.html_url;
-    console.log(`Created PR #${prNumber} for ${scenario.id}`);
   }
 
   return {
@@ -166,12 +168,14 @@ async function main(): Promise<void> {
   console.log(`\nPR matrix: ${output}`);
 
   if (process.env.GITHUB_OUTPUT) {
-    const { appendFileSync } = await import("fs");
+    const { appendFileSync } = await import("node:fs");
     appendFileSync(process.env.GITHUB_OUTPUT, `pr-matrix=${output}\n`);
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

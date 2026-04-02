@@ -6,7 +6,8 @@
     "setup-prs": "tsx setup-prs.ts",
     "wait-for-checks": "tsx wait-for-checks.ts",
     "evaluate": "tsx evaluate.ts",
-    "report": "tsx report-github.ts"
+    "report": "tsx report-github.ts",
+    "report-slack": "tsx report-slack.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

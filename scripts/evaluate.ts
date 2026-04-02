@@ -1,11 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { Octokit } from "@octokit/rest";
-import { readFileSync, writeFileSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import "dotenv/config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const MAX_COMMENT_LENGTH = 1500;
 
 function required(name: string): string {
   const value = process.env[name];
@@ -34,8 +36,9 @@ interface PrEntry {
 
 interface Tool {
   name: string;
-  botLogin: string;
-  checkName: string;
+  botLogin: string | string[];
+  checkName: string | null;
+  configured: boolean;
 }
 
 interface CheckResult {
@@ -52,9 +55,19 @@ interface ToolComment {
   createdAt: string;
 }
 
+interface SeverityBreakdown {
+  high: number;
+  medium: number;
+  low: number;
+}
+
 interface ToolEvaluation {
+  configured: boolean;
   issuesFound: number;
+  severityBreakdown: SeverityBreakdown;
   falsePositives: number;
+  nitpickRating: number;
+  verbosityRating: number;
   commentQuality: number;
   notableFinding: string | null;
 }
@@ -84,7 +97,7 @@ async function fetchPrComments(
     if (!tool) continue;
     comments.push({
       tool,
-      body: c.body.slice(0, 1000),
+      body: c.body.slice(0, MAX_COMMENT_LENGTH),
       path: c.path,
       line: c.line ?? c.original_line ?? undefined,
       createdAt: c.created_at,
@@ -102,8 +115,24 @@ async function fetchPrComments(
     if (!tool) continue;
     comments.push({
       tool,
-      body: c.body?.slice(0, 1000) ?? "",
+      body: c.body?.slice(0, MAX_COMMENT_LENGTH) ?? "",
       createdAt: c.created_at,
+    });
+  }
+
+  const reviews = await octokit.paginate(octokit.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  for (const r of reviews) {
+    const tool = loginToTool.get(r.user?.login ?? "");
+    if (!tool || !r.body) continue;
+    comments.push({
+      tool,
+      body: r.body.slice(0, MAX_COMMENT_LENGTH),
+      createdAt: r.submitted_at ?? new Date().toISOString(),
     });
   }
 
@@ -132,7 +161,7 @@ function buildPrompt(
   changedFiles: string[],
   toolComments: ToolComment[],
   checksSummary: Record<string, CheckResult>,
-  tools: Tool[],
+  configuredTools: Tool[],
   isCleanPr: boolean
 ): string {
   const expectedCount =
@@ -140,134 +169,155 @@ function buildPrompt(
     scenario.expectedIssues.bugs +
     scenario.expectedIssues.smells;
 
-  const toolReviewsSection = tools
+  const toolReviewsSection = configuredTools
     .map((tool) => {
-      const check = checksSummary[tool.checkName] ?? {
-        conclusion: "not_found",
-        detailsUrl: null,
-      };
+      const check = tool.checkName
+        ? (checksSummary[tool.checkName] ?? { conclusion: "not_found", detailsUrl: null })
+        : { conclusion: "no_check_run", detailsUrl: null };
       const comments = toolComments.filter((c) => c.tool === tool.name);
       const inlineComments = comments.filter((c) => c.path);
       const summaryComments = comments.filter((c) => !c.path);
 
       const inlineSection =
         inlineComments.length > 0
-          ? inlineComments
-              .map((c) => `  [${c.path}:${c.line ?? "?"}] ${c.body}`)
-              .join("\n")
-          : "  (no inline comments)";
+          ? inlineComments.map((c) => `  [${c.path}:${c.line ?? "?"}] ${c.body}`).join("\n")
+          : "  (none)";
 
       const summarySection =
         summaryComments.length > 0
           ? summaryComments.map((c) => `  ${c.body}`).join("\n")
-          : "  (no summary comment)";
+          : "  (none)";
 
       return `=== ${tool.name} ===
-Check conclusion: ${check.conclusion}
-
-Inline review comments:
+Check: ${check.conclusion}
+Inline comments (${inlineComments.length}):
 ${inlineSection}
-
-Summary/PR-level comments:
+Summary comments (${summaryComments.length}):
 ${summarySection}`;
     })
     .join("\n\n");
 
   const cleanPrNote = isCleanPr
-    ? `\nIMPORTANT: This is a clean PR with NO intentional issues introduced. Any issue flagged by a tool is a FALSE POSITIVE. Set issuesFound=0 for tools that correctly post nothing. For tools that do post comments, count each comment as a false positive.`
+    ? `\nIMPORTANT: This is a CLEAN PR — no intentional issues. Any issue flagged = false positive. Set issuesFound=0 for all tools.`
     : "";
 
-  const toolNames = tools.map((t) => t.name).join('", "');
+  const toolNames = configuredTools.map((t) => `"${t.name}"`).join(", ");
 
-  return `<scenario-context>
-Scenario ID: ${scenario.id}
-Category: ${scenario.category}
-Project: ${scenario.project}
-PR Title: "${scenario.prTitle}"
-PR Description: "${scenario.prBody}"
-Expected issues introduced: ${expectedCount} total (${scenario.expectedIssues.security} security, ${scenario.expectedIssues.bugs} bugs, ${scenario.expectedIssues.smells} code smells)${cleanPrNote}
-</scenario-context>
+  const schemaEntries = configuredTools
+    .map(
+      (t) =>
+        `"${t.name}": { "configured": true, "issuesFound": 0, "severityBreakdown": { "high": 0, "medium": 0, "low": 0 }, "falsePositives": 0, "nitpickRating": 3, "verbosityRating": 3, "commentQuality": 1, "notableFinding": null }`
+    )
+    .join(",\n    ");
 
-<changed-files>
-${changedFiles.join("\n")}
-</changed-files>
+  return `<scenario>
+id: ${scenario.id} | category: ${scenario.category} | project: ${scenario.project}
+Expected issues: ${expectedCount} (${scenario.expectedIssues.security} security, ${scenario.expectedIssues.bugs} bugs, ${scenario.expectedIssues.smells} smells)${cleanPrNote}
+Changed files: ${changedFiles.join(", ")}
+</scenario>
 
-<tool-reviews>
+<reviews>
 ${toolReviewsSection}
-</tool-reviews>
+</reviews>
 
-<instructions>
-You are evaluating AI code review tools on their ability to find intentional issues in a pull request.
+Evaluate each tool (${toolNames}). For each:
+- issuesFound: distinct real issues identified (not comment count)
+- severityBreakdown: your estimate of high/medium/low split
+- falsePositives: comments on non-issues or things outside this diff
+- nitpickRating 1-5: 5=only real issues, 1=mostly style/nitpick noise
+- verbosityRating 1-5: 5=concise, 1=very verbose/padded
+- commentQuality 1-5: accuracy + actionability + clarity (1 if no comments)
+- notableFinding: one sentence on something surprising, or null
 
-For each tool ("${toolNames}"), determine:
-1. issuesFound (integer): How many distinct issues did this tool identify in its comments? Count each unique problem flagged, not each comment. If the tool timed out or has no comments, use 0.
-2. falsePositives (integer): How many comments appear to flag things that are not real issues in this diff?
-3. commentQuality (1-5): Overall quality of the tool's comments — are they accurate, actionable, well-explained? Use 1 if no comments posted.
-4. notableFinding (string or null): Any interesting or surprising behavior from this tool (e.g., "Caught cross-module impact", "Missed obvious SQL injection", "Only tool to flag the hardcoded secret"). Null if nothing notable.
-
-Respond with ONLY valid JSON matching this exact schema (no markdown, no explanation):
+Reply ONLY with valid JSON, no markdown:
 {
   "scenarioId": "${scenario.id}",
   "prNumber": 0,
   "expectedIssueCount": ${expectedCount},
   "perTool": {
-    ${tools.map((t) => `"${t.name}": { "issuesFound": 0, "falsePositives": 0, "commentQuality": 1, "notableFinding": null }`).join(",\n    ")}
+    ${schemaEntries}
   }
+}`;
 }
-</instructions>`;
+
+interface ScenarioData {
+  prEntry: PrEntry;
+  changedFiles: string[];
+  toolComments: ToolComment[];
+  checksSummary: Record<string, CheckResult>;
 }
 
 async function evaluateScenario(
   anthropic: Anthropic,
   model: string,
   scenario: Scenario,
-  prEntry: PrEntry,
-  changedFiles: string[],
-  toolComments: ToolComment[],
-  checksSummary: Record<string, CheckResult>,
-  tools: Tool[]
+  data: ScenarioData,
+  allTools: Tool[]
 ): Promise<EvaluationResult> {
+  const configuredTools = allTools.filter((t) => t.configured);
   const isCleanPr = scenario.category === "clean";
+
   const prompt = buildPrompt(
     scenario,
-    changedFiles,
-    toolComments,
-    checksSummary,
-    tools,
+    data.changedFiles,
+    data.toolComments,
+    data.checksSummary,
+    configuredTools,
     isCleanPr
   );
 
   const message = await anthropic.messages.create({
     model,
-    max_tokens: 1024,
+    max_tokens: 2048,
     messages: [{ role: "user", content: prompt }],
   });
 
-  const text =
-    message.content[0].type === "text" ? message.content[0].text : "";
+  const text = message.content[0].type === "text" ? message.content[0].text : "";
+
+  const expectedCount =
+    scenario.expectedIssues.security +
+    scenario.expectedIssues.bugs +
+    scenario.expectedIssues.smells;
+
+  const notConfiguredEntry: ToolEvaluation = {
+    configured: false,
+    issuesFound: 0,
+    severityBreakdown: { high: 0, medium: 0, low: 0 },
+    falsePositives: 0,
+    nitpickRating: 0,
+    verbosityRating: 0,
+    commentQuality: 0,
+    notableFinding: null,
+  };
 
   let result: EvaluationResult;
   try {
     result = JSON.parse(text);
-    result.prNumber = prEntry.prNumber;
+    result.prNumber = data.prEntry.prNumber;
+    for (const tool of allTools.filter((t) => !t.configured)) {
+      result.perTool[tool.name] = notConfiguredEntry;
+    }
   } catch {
     console.error(`Failed to parse Claude response for ${scenario.id}:`, text);
     result = {
       scenarioId: scenario.id,
-      prNumber: prEntry.prNumber,
-      expectedIssueCount:
-        scenario.expectedIssues.security +
-        scenario.expectedIssues.bugs +
-        scenario.expectedIssues.smells,
+      prNumber: data.prEntry.prNumber,
+      expectedIssueCount: expectedCount,
       perTool: Object.fromEntries(
-        tools.map((t) => [
+        allTools.map((t) => [
           t.name,
-          {
-            issuesFound: 0,
-            falsePositives: 0,
-            commentQuality: 1,
-            notableFinding: "Evaluation failed: could not parse Claude response",
-          },
+          t.configured
+            ? {
+                configured: true,
+                issuesFound: 0,
+                severityBreakdown: { high: 0, medium: 0, low: 0 },
+                falsePositives: 0,
+                nitpickRating: 0,
+                verbosityRating: 0,
+                commentQuality: 0,
+                notableFinding: null,
+              }
+            : notConfiguredEntry,
         ])
       ),
     };
@@ -286,10 +336,8 @@ async function main(): Promise<void> {
 
   const [owner, repo] = repoFull.split("/");
   const prs: PrEntry[] = JSON.parse(prMatrixRaw);
-  const allChecksSummary: Record<
-    string,
-    Record<string, CheckResult>
-  > = JSON.parse(checksSummaryRaw);
+  const allChecksSummary: Record<string, Record<string, CheckResult>> =
+    JSON.parse(checksSummaryRaw);
 
   const scenariosPath = resolve(__dirname, "../scenarios.json");
   const toolsPath = resolve(__dirname, "../tools.json");
@@ -298,7 +346,10 @@ async function main(): Promise<void> {
 
   const loginToTool = new Map<string, string>();
   for (const tool of tools) {
-    loginToTool.set(tool.botLogin, tool.name);
+    const logins = Array.isArray(tool.botLogin) ? tool.botLogin : [tool.botLogin];
+    for (const login of logins) {
+      loginToTool.set(login, tool.name);
+    }
   }
 
   const octokit = new Octokit({ auth: token });
@@ -326,10 +377,7 @@ async function main(): Promise<void> {
       anthropic,
       model,
       scenario,
-      prEntry,
-      changedFiles,
-      toolComments,
-      checksSummary,
+      { prEntry, changedFiles, toolComments, checksSummary },
       tools
     );
 
@@ -342,17 +390,17 @@ async function main(): Promise<void> {
   console.log(`\nEvaluation results written to /tmp/evaluation.json`);
 
   if (process.env.GITHUB_OUTPUT) {
-    const { appendFileSync } = await import("fs");
+    const MAX_OUTPUT_BYTES = 900_000;
+    const { appendFileSync } = await import("node:fs");
     const truncated =
-      output.length > 900_000 ? output.slice(0, 900_000) + "..." : output;
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `evaluation-json=${truncated}\n`
-    );
+      output.length > MAX_OUTPUT_BYTES ? output.slice(0, MAX_OUTPUT_BYTES) + "..." : output;
+    appendFileSync(process.env.GITHUB_OUTPUT, `evaluation-json=${truncated}\n`);
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

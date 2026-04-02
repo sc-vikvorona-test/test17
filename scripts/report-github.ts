@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import { readFileSync } from "fs";
+import { readFileSync } from "node:fs";
 import "dotenv/config";
 
 function required(name: string): string {
@@ -228,7 +228,9 @@ async function main(): Promise<void> {
   console.log(`Created GitHub Issue #${data.number}: ${data.html_url}`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}
