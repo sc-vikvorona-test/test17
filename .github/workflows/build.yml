@@ -15,35 +15,43 @@ concurrency:
 
 jobs:
   build:
-    # TODO: Choose the appropriate runner for your repository
-    # For guidance on runner selection, visit:
-    # https://xtranet-sonarsource.atlassian.net/wiki/spaces/Platform/pages/3694231566/GitHub+Actions+Runner+-+GitHub
-    runs-on: sonar-xs  # Recommended for private/internal repositories
+    runs-on: sonar-xs
     name: Build
     permissions:
       id-token: write
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1 #TODO: update to the last version
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Vault secrets
+        id: secrets
+        uses: SonarSource/vault-action-wrapper@320bd31b03e5dacaac6be51bbbb15adf7caccc32 # 3.1.0
+        with:
+          secrets: |
+            development/artifactory/token/{REPO_OWNER_NAME_DASH}-private-reader access_token | ARTIFACTORY_TOKEN;
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: scripts
+        run: |
+          echo "//repox.jfrog.io/:_authToken=${{ fromJSON(steps.secrets.outputs.vault).ARTIFACTORY_TOKEN }}" >> ~/.npmrc
+          npm ci
 
-      # SECURITY BEST PRACTICES:
-      # - Pin all external actions to specific SHA commits (not tags) for security
-      # - All secrets MUST come from Vault using SonarSource/vault-action-wrapper
-      # - Never use GitHub Secrets for sensitive data
-
-      # TODO: Add your build steps here
-      #
-      # For ready-to-use SonarSource GitHub Actions with real-world examples
-      # and production-ready implementations, visit:
-      # https://github.com/SonarSource/ci-github-actions
-      #
-      # For caching, use SonarSource/gh-action_cache@v1
-      # It automatically chooses GitHub Actions cache (public) or S3 cache (private)
-      #
-      # Real-world reference repositories:
-      # - sonar-dummy: Private Java/Maven
-      # - sonar-dummy-gradle-oss: Public Java/Gradle
-      # - sonar-dummy-python-oss: Public Python/Poetry
-      # - sonar-dummy-js: Public NodeJS/Yarn
-      #
+  sonar-analysis:
+    name: SonarQube Cloud Analysis
+    runs-on: sonar-xs
+    needs:
+      - build
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: SonarQube Cloud Scan
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
