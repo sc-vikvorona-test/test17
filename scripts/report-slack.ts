@@ -8,6 +8,7 @@ function required(name: string): string {
 }
 
 interface SeverityBreakdown {
+  blocker: number;
   high: number;
   medium: number;
   low: number;
@@ -53,8 +54,8 @@ interface ToolSummary {
   severityBreakdown: SeverityBreakdown;
   totalFalsePositives: number;
   falsePositivesOnClean: number;
-  avgNitpickRating: number;
-  avgVerbosityRating: number;
+  avgFocusRating: number;
+  avgConcisenessRating: number;
   avgCommentQuality: number;
 }
 
@@ -76,11 +77,11 @@ function computeToolSummaries(
         totalFound: 0,
         totalExpected: 0,
         detectionRate: 0,
-        severityBreakdown: { high: 0, medium: 0, low: 0 },
+        severityBreakdown: { blocker: 0, high: 0, medium: 0, low: 0 },
         totalFalsePositives: 0,
         falsePositivesOnClean: 0,
-        avgNitpickRating: 0,
-        avgVerbosityRating: 0,
+        avgFocusRating: 0,
+        avgConcisenessRating: 0,
         avgCommentQuality: 0,
       };
     }
@@ -91,10 +92,11 @@ function computeToolSummaries(
     );
     const totalExpected = issueResults.reduce((sum, r) => sum + r.expectedIssueCount, 0);
 
-    const severityBreakdown: SeverityBreakdown = { high: 0, medium: 0, low: 0 };
+    const severityBreakdown: SeverityBreakdown = { blocker: 0, high: 0, medium: 0, low: 0 };
     for (const r of issueResults) {
       const sev = r.perTool[toolName]?.severityBreakdown;
       if (sev) {
+        severityBreakdown.blocker += sev.blocker ?? 0;
         severityBreakdown.high += sev.high;
         severityBreakdown.medium += sev.medium;
         severityBreakdown.low += sev.low;
@@ -125,11 +127,19 @@ function computeToolSummaries(
       severityBreakdown,
       totalFalsePositives,
       falsePositivesOnClean,
-      avgNitpickRating: avg("nitpickRating"),
-      avgVerbosityRating: avg("verbosityRating"),
+      avgFocusRating: avg("nitpickRating"),
+      avgConcisenessRating: avg("verbosityRating"),
       avgCommentQuality: avg("commentQuality"),
     };
   });
+}
+
+function padR(s: string, len: number): string {
+  return s.length >= len ? s : s + " ".repeat(len - s.length);
+}
+
+function padL(s: string, len: number): string {
+  return s.length >= len ? s : " ".repeat(len - s.length) + s;
 }
 
 function stars(value: number, max: number = 5): string {
@@ -145,31 +155,35 @@ function formatDate(): string {
   return new Date().toISOString().split("T")[0];
 }
 
-function buildSlackBlocks(
+function fpIndicator(fp: number): string {
+  return fp === 0 ? "✅ 0" : `⚠️ ${fp}`;
+}
+
+function buildLeaderboardBlocks(
   summaries: ToolSummary[],
-  results: EvaluationResult[],
-  scenarios: Scenario[],
-  prs: PrEntry[],
+  resultCount: number,
   runUrl: string
 ): object[] {
   const date = formatDate();
   const configuredSummaries = summaries.filter((s) => s.configured);
   const notConfiguredSummaries = summaries.filter((s) => !s.configured);
 
-  // Sort by detection rate desc, then by fewest FPs
   const ranked = [...configuredSummaries].sort(
     (a, b) => b.detectionRate - a.detectionRate || a.totalFalsePositives - b.totalFalsePositives
   );
 
   const leaderboardLines = ranked.map((t, i) => {
-    const sev = `H:${t.severityBreakdown.high} M:${t.severityBreakdown.medium} L:${t.severityBreakdown.low}`;
+    const sev = `B:${t.severityBreakdown.blocker} H:${t.severityBreakdown.high} M:${t.severityBreakdown.medium} L:${t.severityBreakdown.low}`;
+    const fp = fpIndicator(t.totalFalsePositives);
+    const fpClean = t.falsePositivesOnClean > 0 ? ` (${t.falsePositivesOnClean} on clean)` : "";
     return (
-      `${medal(i)} *${t.name}*  ${t.totalFound}/${t.totalExpected} (${t.detectionRate.toFixed(0)}%)  ` +
-      `FP:${t.totalFalsePositives} (clean:${t.falsePositivesOnClean})  ` +
-      `[${sev}]  ` +
-      `quality:${t.avgCommentQuality.toFixed(1)}  ` +
-      `nitpick:${stars(t.avgNitpickRating)}  ` +
-      `verbosity:${stars(t.avgVerbosityRating)}`
+      `${medal(i)} *${t.name}*  ` +
+      `${t.totalFound}/${t.totalExpected} detected (${t.detectionRate.toFixed(0)}%)  ` +
+      `FP: ${fp}${fpClean}  ` +
+      `[${sev}]\n` +
+      `    Quality: ${stars(t.avgCommentQuality)}  ` +
+      `Focus: ${stars(t.avgFocusRating)}  ` +
+      `Conciseness: ${stars(t.avgConcisenessRating)}`
     );
   });
 
@@ -179,37 +193,7 @@ function buildSlackBlocks(
     );
   }
 
-  // Per-scenario breakdown
-  const toolOrder = ranked.map((t) => t.name);
-  const scenarioHeader =
-    `Scenario | Cat | Exp | ` + toolOrder.join(" | ");
-  const scenarioRows = results.map((r) => {
-    const pr = prs.find((p) => p.scenarioId === r.scenarioId);
-    const prLink = pr ? `<${pr.prUrl}|${r.scenarioId}>` : r.scenarioId;
-    const scenario = scenarios.find((s) => s.id === r.scenarioId);
-    const cat = scenario?.category.slice(0, 4) ?? "?";
-    const cells = toolOrder.map((name) => {
-      const e = r.perTool[name];
-      if (!e) return "-";
-      if (r.expectedIssueCount === 0) {
-        return e.falsePositives === 0 ? "✅" : `⚠️${e.falsePositives}fp`;
-      }
-      return `${e.issuesFound}/${r.expectedIssueCount}`;
-    });
-    return `${prLink} | ${cat} | ${r.expectedIssueCount} | ${cells.join(" | ")}`;
-  });
-
-  // Notable findings
-  const notables: string[] = [];
-  for (const r of results) {
-    for (const [toolName, e] of Object.entries(r.perTool)) {
-      if (e.notableFinding) {
-        notables.push(`• *${toolName}* on \`${r.scenarioId}\`: ${e.notableFinding}`);
-      }
-    }
-  }
-
-  const blocks: object[] = [
+  return [
     {
       type: "header",
       text: { type: "plain_text", text: `Code Review Benchmark — ${date}` },
@@ -218,45 +202,85 @@ function buildSlackBlocks(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Leaderboard*\n${leaderboardLines.join("\n")}`,
+        text: `*Leaderboard* (${resultCount} scenarios)\n\n${leaderboardLines.join("\n\n")}`,
       },
     },
-    { type: "divider" },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Per-Scenario* \`${scenarioHeader}\`\n${scenarioRows.join("\n")}`,
-      },
-    },
-  ];
-
-  const trailingBlocks: object[] = [
     { type: "divider" },
     {
       type: "context",
       elements: [
         {
           type: "mrkdwn",
-          text: `<${runUrl}|View Actions run> · ${results.length} scenarios evaluated`,
+          text: `<${runUrl}|View Actions run> · Focus: 5=focused on real issues · Conciseness: 5=concise`,
         },
       ],
     },
   ];
+}
 
-  if (notables.length > 0) {
-    return [
-      ...blocks,
-      { type: "divider" },
-      {
-        type: "section",
-        text: { type: "mrkdwn", text: `*Notable Findings*\n${notables.join("\n")}` },
-      },
-      ...trailingBlocks,
-    ];
+function buildScenarioGridBlocks(
+  results: EvaluationResult[],
+  summaries: ToolSummary[],
+  scenarios: Scenario[],
+  _prs: PrEntry[]
+): object[] {
+  const configuredSummaries = summaries.filter((s) => s.configured);
+  const ranked = [...configuredSummaries].sort(
+    (a, b) => b.detectionRate - a.detectionRate || a.totalFalsePositives - b.totalFalsePositives
+  );
+  const toolNames = ranked.map((t) => t.name);
+
+  function cellValue(result: EvaluationResult, toolName: string): string {
+    const e = result.perTool[toolName];
+    if (!e?.configured) return "—";
+    if (result.expectedIssueCount === 0) {
+      return e.falsePositives === 0 ? "✓ 0FP" : `! ${e.falsePositives}FP`;
+    }
+    const ratio = `${e.issuesFound}/${result.expectedIssueCount}`;
+    return e.falsePositives > 0 ? `${ratio} +${e.falsePositives}FP` : ratio;
   }
 
-  return [...blocks, ...trailingBlocks];
+  // Calculate column widths dynamically
+  const idWidth = Math.max(8, ...results.map((r) => (r.scenarioId ?? "").length));
+  const expWidth = 3; // "Exp"
+
+  const toolWidths = toolNames.map((name) => {
+    const headerLen = name.length;
+    const dataLen = Math.max(...results.map((r) => cellValue(r, name).length));
+    return Math.max(headerLen, dataLen);
+  });
+
+  const headerParts = [padR("Scenario", idWidth), padR("Exp", expWidth)];
+  toolNames.forEach((name, i) => headerParts.push(padR(name, toolWidths[i])));
+  const header = headerParts.join("  ");
+  const separator = "─".repeat(header.length);
+
+  const rows: string[] = [header, separator];
+
+  for (const result of results) {
+    const label = padR(result.scenarioId ?? "", idWidth);
+    const exp = padR(String(result.expectedIssueCount), expWidth);
+    const toolCols = toolNames.map((name, i) => padR(cellValue(result, name), toolWidths[i]));
+    rows.push([label, exp, ...toolCols].join("  "));
+  }
+
+  const gridText = rows.join("\n");
+  const SLACK_LIMIT = 2900;
+  const prefix = "*Scenario Grid*  (found/expected  +FP=false positives)\n```\n";
+  const suffix = "\n```";
+  const body = gridText.length + prefix.length + suffix.length > SLACK_LIMIT
+    ? gridText.slice(0, SLACK_LIMIT - prefix.length - suffix.length - 3) + "..."
+    : gridText;
+
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `${prefix}${body}${suffix}`,
+      },
+    },
+  ];
 }
 
 async function postToSlack(
@@ -314,9 +338,9 @@ async function main(): Promise<void> {
   }
 
   const summaries = computeToolSummaries(results, toolNames);
-  const blocks = buildSlackBlocks(summaries, results, scenarios, prs, runUrl);
 
-  await postToSlack(slackToken, channel, blocks);
+  await postToSlack(slackToken, channel, buildLeaderboardBlocks(summaries, results.length, runUrl));
+  await postToSlack(slackToken, channel, buildScenarioGridBlocks(results, summaries, scenarios, prs));
 }
 
 try {

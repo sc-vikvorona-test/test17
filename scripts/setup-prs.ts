@@ -55,6 +55,80 @@ async function getTagSha(
   return data.object.sha;
 }
 
+async function getMasterSha(
+  octokit: Octokit,
+  owner: string,
+  repo: string
+): Promise<string> {
+  const { data } = await octokit.git.getRef({ owner, repo, ref: "heads/master" });
+  return data.object.sha;
+}
+
+// Cherry-pick scenario changes from sourceTagSha onto master, returning a new commit SHA.
+async function rebaseScenarioOntoMaster(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  sourceTagSha: string,
+  masterSha: string,
+  message: string
+): Promise<string> {
+  const { data: tagCommit } = await octokit.git.getCommit({ owner, repo, commit_sha: sourceTagSha });
+  const parentSha = tagCommit.parents[0]?.sha;
+
+  if (!parentSha) {
+    // No parent — use tag directly (shouldn't happen in practice)
+    return sourceTagSha;
+  }
+
+  // Get files changed between the tag's parent and the tag itself
+  const { data: comparison } = await octokit.repos.compareCommits({
+    owner,
+    repo,
+    base: parentSha,
+    head: sourceTagSha,
+  });
+
+  if (!comparison.files || comparison.files.length === 0) {
+    return masterSha;
+  }
+
+  // Get master's tree SHA
+  const { data: masterCommit } = await octokit.git.getCommit({ owner, repo, commit_sha: masterSha });
+
+  // Build tree entries: apply scenario file changes on top of master's tree
+  const treeEntries = comparison.files.flatMap((file) => {
+    if (file.status === "removed") {
+      return [{ path: file.filename, mode: "100644" as const, type: "blob" as const, sha: null }];
+    }
+    if (file.status === "renamed" && file.previous_filename) {
+      // Delete old path, add new path
+      return [
+        { path: file.previous_filename, mode: "100644" as const, type: "blob" as const, sha: null },
+        { path: file.filename, mode: "100644" as const, type: "blob" as const, sha: file.sha },
+      ];
+    }
+    return [{ path: file.filename, mode: "100644" as const, type: "blob" as const, sha: file.sha }];
+  });
+
+  const { data: newTree } = await octokit.git.createTree({
+    owner,
+    repo,
+    base_tree: masterCommit.tree.sha,
+    tree: treeEntries,
+  });
+
+  const { data: newCommit } = await octokit.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTree.sha,
+    parents: [masterSha],
+  });
+
+  return newCommit.sha;
+}
+
 async function forcePushBranch(
   octokit: Octokit,
   owner: string,
@@ -156,9 +230,13 @@ async function main(): Promise<void> {
   const octokit = new Octokit({ auth: token });
   const results: PrEntry[] = [];
 
+  const masterSha = await getMasterSha(octokit, owner, repo);
+  console.log(`Master HEAD: ${masterSha}`);
+
   for (const scenario of scenarios) {
     console.log(`Processing scenario: ${scenario.id}`);
-    const sha = await getTagSha(octokit, owner, repo, scenario.sourceTag);
+    const tagSha = await getTagSha(octokit, owner, repo, scenario.sourceTag);
+    const sha = await rebaseScenarioOntoMaster(octokit, owner, repo, tagSha, masterSha, scenario.prTitle);
     await forcePushBranch(octokit, owner, repo, scenario.branch, sha);
     const entry = await setupPr(octokit, owner, repo, scenario, sha);
     results.push(entry);

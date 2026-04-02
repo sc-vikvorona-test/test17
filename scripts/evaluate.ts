@@ -56,6 +56,7 @@ interface ToolComment {
 }
 
 interface SeverityBreakdown {
+  blocker: number;
   high: number;
   medium: number;
   low: number;
@@ -206,7 +207,7 @@ ${summarySection}`;
   const schemaEntries = configuredTools
     .map(
       (t) =>
-        `"${t.name}": { "configured": true, "issuesFound": 0, "severityBreakdown": { "high": 0, "medium": 0, "low": 0 }, "falsePositives": 0, "nitpickRating": 3, "verbosityRating": 3, "commentQuality": 1, "notableFinding": null }`
+        `"${t.name}": { "configured": true, "issuesFound": 0, "severityBreakdown": { "blocker": 0, "high": 0, "medium": 0, "low": 0 }, "falsePositives": 0, "nitpickRating": 3, "verbosityRating": 3, "commentQuality": 1, "notableFinding": null }`
     )
     .join(",\n    ");
 
@@ -222,7 +223,7 @@ ${toolReviewsSection}
 
 Evaluate each tool (${toolNames}). For each:
 - issuesFound: distinct real issues identified (not comment count)
-- severityBreakdown: your estimate of high/medium/low split
+- severityBreakdown: classify each found issue as blocker (crash/data-loss/security), high (likely bug), medium (possible bug/design), or low (minor/style). Must sum to issuesFound
 - falsePositives: comments on non-issues or things outside this diff
 - nitpickRating 1-5: 5=only real issues, 1=mostly style/nitpick noise
 - verbosityRating 1-5: 5=concise, 1=very verbose/padded
@@ -282,7 +283,7 @@ async function evaluateScenario(
   const notConfiguredEntry: ToolEvaluation = {
     configured: false,
     issuesFound: 0,
-    severityBreakdown: { high: 0, medium: 0, low: 0 },
+    severityBreakdown: { blocker: 0, high: 0, medium: 0, low: 0 },
     falsePositives: 0,
     nitpickRating: 0,
     verbosityRating: 0,
@@ -310,7 +311,7 @@ async function evaluateScenario(
             ? {
                 configured: true,
                 issuesFound: 0,
-                severityBreakdown: { high: 0, medium: 0, low: 0 },
+                severityBreakdown: { blocker: 0, high: 0, medium: 0, low: 0 },
                 falsePositives: 0,
                 nitpickRating: 0,
                 verbosityRating: 0,

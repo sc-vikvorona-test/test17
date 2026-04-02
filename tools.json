@@ -34,7 +34,7 @@
       "name": "Gitar",
       "botLogin": "gitar-bot[bot]",
       "checkName": null,
-      "configured": false
+      "configured": true
     }
   ]
 }
