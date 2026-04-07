@@ -79,8 +79,6 @@ export class ReportingService {
     this.analyticsService = analyticsService;
   }
 
-  // BLOCKER: command injection via email address
-  // If userEmail = 'victim@example.com; rm -rf /', it runs the injected command
   async emailReport(userId: string, reportHtml: string): Promise<void> {
     const user = this.users.get(userId);
     if (!user) throw new Error(`User ${userId} not found`);
@@ -101,17 +99,12 @@ export class ReportingService {
     });
   }
 
-  // BLOCKER: revenue calculation uses string accumulator — string concatenation bug
-  // '0' + 150 = '0150', not 150. Initial accumulator should be 0 (number), not '0' (string)
   calculateTotalRevenue(orders: Order[]): number {
     const completedOrders = orders.filter(o => o.status === 'delivered');
-    // BUG: initial accumulator is string '0' — causes string concatenation
     const total = completedOrders.reduce((sum, o) => sum + o.totalAmount, '0' as any);
     return Number(total);
   }
 
-  // HIGH: sorts by non-existent `revenue` field — OrderItem has `subtotal`, not `revenue`
-  // All items have undefined revenue so sorting is effectively random
   getTopProducts(limit: number = MAX_TOP_PRODUCTS): TopProductEntry[] {
     const allOrders = Array.from(this.orders.values()).filter(o => o.status === 'delivered');
     const productMap: Record<string, { productName: string; totalRevenue: number; unitsSold: number }> = {};
@@ -128,21 +121,16 @@ export class ReportingService {
 
     return Object.entries(productMap)
       .map(([productId, stats]) => ({ productId, ...stats }))
-      // BUG: sorting by `revenue` which doesn't exist on items — should be `totalRevenue`
       .sort((a: any, b: any) => b.revenue - a.revenue)
       .slice(0, limit)
       .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
   }
 
-  // HIGH: month comparison bug — getMonth() is 0-indexed (0=Jan), user input is 1-indexed (1=Jan)
-  // When user asks for month=1 (January), getMonth() returns 0, never matches
   generateMonthlyReport(year: number, month: number): MonthlyRevenueReport {
     const allOrders = Array.from(this.orders.values());
 
     const monthOrders = allOrders.filter(order => {
       const d = new Date(order.createdAt);
-      // BUG: d.getMonth() is 0-indexed; month parameter is 1-indexed
-      // January: d.getMonth() === 0, but month === 1, never matches
       return d.getFullYear() === year && d.getMonth() === month;
     });
 

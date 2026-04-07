@@ -30,16 +30,13 @@ export class AnalyticsController {
     this.dashboardService = dashboardService;
   }
 
-  // BLOCKER: no authentication middleware on admin analytics routes
-  // Anyone on the internet can hit /api/analytics/admin/* and get all user data
   registerRoutes(app: any): void {
     // Public-ish analytics (should still be authenticated)
     app.get('/api/analytics/sales', requireAuth, this.getSalesMetrics.bind(this));
     app.get('/api/analytics/revenue', requireAuth, this.getRevenueBreakdown.bind(this));
     app.get('/api/analytics/funnel', requireAuth, this.getFunnelMetrics.bind(this));
 
-    // Admin analytics — MISSING requireAuth and requireAdmin middleware
-    // BUG: these expose all user data without any auth check
+    // Admin analytics
     app.get('/api/analytics/admin/users', this.getAllUserAnalytics.bind(this));
     app.get('/api/analytics/admin/segments', this.getUserSegments.bind(this));
     app.get('/api/analytics/admin/cohorts', this.getCohortAnalysis.bind(this));
@@ -61,13 +58,9 @@ export class AnalyticsController {
     app.get('/api/analytics/dashboard/realtime', requireAuth, this.getRealtimeStats.bind(this));
   }
 
-  // HIGH: IDOR — req.params.userId not verified against req.user.userId
-  // User A can request /api/analytics/users/user-B-id and see user B's data
   async getUserAnalytics(req: Request, res: Response): Promise<void> {
     try {
       const { userId } = req.params;
-      // BUG: should check (req as any).user.userId === userId, or admin role
-      // Current code lets any authenticated user view any user's analytics
 
       const endDate = new Date();
       const startDate = new Date(endDate.getTime() - DEFAULT_DAYS * 24 * 60 * 60 * 1000);

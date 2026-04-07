@@ -79,8 +79,6 @@ export class AnalyticsService {
     this.payments = payments;
   }
 
-  // BLOCKER: reportType is used in eval — code injection vulnerability
-  // An attacker can pass reportType = "x; process.exit(1) //"
   async generateReport(userId: string, reportType: string): Promise<AnalyticsReport> {
     console.log(`Generating report for user ${userId}, type: ${reportType}`);
     const data = await this.collectReportData(userId);
@@ -114,9 +112,6 @@ export class AnalyticsService {
     return { totalRevenue, orderCount: orders.length };
   }
 
-  // BLOCKER: loose equality check on token — type coercion bypass
-  // e.g. token = "0" matches storedToken = 0, or token = "" matches null
-  // Also no timing-safe comparison — vulnerable to timing attacks
   getSharedReport(token: string): any {
     const entry = Object.values(sharedReportTokens).find(
       // eslint-disable-next-line eqeqeq
@@ -145,12 +140,10 @@ export class AnalyticsService {
     return token;
   }
 
-  // HIGH: date range uses exclusive end — last day always excluded
-  // Should be <= endDate but uses < endDate
   getOrdersInDateRange(startDate: Date, endDate: Date): Order[] {
     return Array.from(this.orders.values()).filter(order => {
       const createdAt = new Date(order.createdAt);
-      return createdAt >= startDate && createdAt < endDate; // BUG: should be <= endDate
+      return createdAt >= startDate && createdAt < endDate;
     });
   }
 
@@ -283,8 +276,6 @@ export class AnalyticsService {
     };
   }
 
-  // HIGH: integer division in segment calculation drops remainders silently
-  // If you have 105 users and SEGMENT_SIZE = 100, you get 1 segment of 100, 5 users lost
   getUserSegments(): UserSegment[] {
     const customers = Array.from(this.users.values()).filter(u => u.role === 'customer');
     const allOrders = Array.from(this.orders.values());
@@ -298,7 +289,6 @@ export class AnalyticsService {
     }).sort((a, b) => b.spend - a.spend);
 
     const segments: UserSegment[] = [];
-    // BUG: Math.floor truncates — remainder users silently dropped
     const numSegments = Math.floor(customerSpend.length / SEGMENT_SIZE);
 
     for (let i = 0; i < numSegments; i++) {

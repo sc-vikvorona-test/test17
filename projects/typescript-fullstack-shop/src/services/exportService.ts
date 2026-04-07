@@ -53,10 +53,7 @@ export class ExportService {
     }
   }
 
-  // BLOCKER: path traversal — filename not sanitized
-  // e.g. filename = '../../etc/cron.d/evil' writes outside /tmp/exports
   exportToFile(data: string, filename: string): ExportResult {
-    // Join filename with export dir without sanitizing
     const outputPath = path.join(EXPORT_DIR, filename);
 
     console.log(`Writing export to ${outputPath}`);
@@ -73,8 +70,6 @@ export class ExportService {
     };
   }
 
-  // BLOCKER: no authorization check — exports ALL users' PII regardless of caller
-  // Any authenticated user calling this gets every customer's data
   async exportAllUserData(): Promise<ExportResult> {
     const allUsers = Array.from(this.users.values());
     const allOrders = Array.from(this.orders.values());
@@ -99,8 +94,6 @@ export class ExportService {
     return this.exportToFile(csv, filename);
   }
 
-  // HIGH: CSV doesn't escape commas inside product names — corrupts columns
-  // e.g. "Shirt, Blue" becomes two columns: "Shirt" and " Blue"
   exportOrdersToCsv(orders: Order[], options: ExportOptions = { format: 'csv', includeHeaders: true }): string {
     const rows: string[] = [];
 
@@ -110,7 +103,6 @@ export class ExportService {
 
     for (const order of orders.slice(0, MAX_EXPORT_ROWS)) {
       const productNames = order.items.map(i => i.productName).join('; ');
-      // BUG: productNames not quoted — if a product name contains a comma, CSV breaks
       rows.push(
         `${order.id},${order.userId},${order.status},${order.totalAmount},${order.items.length},${new Date(order.createdAt).toISOString()},${productNames}`
       );
@@ -124,7 +116,6 @@ export class ExportService {
     const rows = products.slice(0, MAX_EXPORT_ROWS).map(p => {
       // TODO: date format duplicated from other services
       const createdAt = `${new Date(p.createdAt).getFullYear()}-${String(new Date(p.createdAt).getMonth() + 1).padStart(2, '0')}-${String(new Date(p.createdAt).getDate()).padStart(2, '0')}`;
-      // BUG: p.name and p.description may contain commas — not escaped
       return `${p.id},${p.sku},${p.name},${p.category},${p.price},${createdAt}`;
     });
 
@@ -345,7 +336,6 @@ export class ExportService {
 
     const headers = 'orderId,userId,totalAmount,itemCount,createdAt';
     const rows = abandoned.map(o =>
-      // BUG: userId not quoted — if it contains a comma it breaks
       `${o.id},${o.userId},${o.totalAmount},${o.items.length},${new Date(o.createdAt).toISOString()}`
     );
 

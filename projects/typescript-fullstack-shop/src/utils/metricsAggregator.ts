@@ -50,11 +50,7 @@ export class MetricsAggregator {
     this.dataProcessor = dataProcessor;
   }
 
-  // BLOCKER: mutates first argument in-place — callers can silently corrupt their own data
-  // mergeMetrics(a, a) would increment all fields by themselves, then return the doubled object
-  // Caller expecting immutable merge gets back their original reference, now mutated
   mergeMetrics(a: AggregatedMetrics, b: AggregatedMetrics): AggregatedMetrics {
-    // BUG: directly mutates `a` instead of creating a new object
     a.totalRevenue += b.totalRevenue;
     a.totalOrders += b.totalOrders;
     a.uniqueCustomers += b.uniqueCustomers;
@@ -74,14 +70,10 @@ export class MetricsAggregator {
     a.conversionProxy = (a.conversionProxy + b.conversionProxy) / 2;
     a.topProductId = a.topProductId || b.topProductId;
 
-    return a; // returns the mutated first argument
+    return a;
   }
 
-  // HIGH: time window uses Date.now() at call time, not at window boundary
-  // Every call creates a slightly different window, making consecutive calls non-comparable
-  // Should use a fixed anchor time passed in as a parameter
   aggregateInWindow(orders: Order[], windowMinutes: number = DEFAULT_WINDOW_MINUTES): MetricWindow {
-    // BUG: window end is "now" at function call time — shifts on every invocation
     const windowEnd = new Date(Date.now());
     const windowStart = new Date(windowEnd.getTime() - windowMinutes * 60 * 1000);
 

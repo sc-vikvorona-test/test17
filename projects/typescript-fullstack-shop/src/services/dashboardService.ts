@@ -6,7 +6,6 @@ import { ReportingService } from './reportingService';
 // TODO: Replace polling with websocket push updates
 // TODO: Add Redis cache instead of in-memory Map
 
-// BLOCKER: hardcoded secret API key — exposed in source code
 const INTERNAL_API_KEY = 'sk-internal-dashboard-2024-prod-key';
 
 const WIDGET_REFRESH_INTERVAL_MS = 1000 * 60; // 1 minute
@@ -58,9 +57,6 @@ export interface RealtimeStats {
 // In-memory cache for dashboard data
 let cache = new Map<string, { data: any; timestamp: number }>();
 
-// BLOCKER: cache cleared on interval but uses closure over initial `cache` reference.
-// If `cache` is reassigned (e.g. cache = new Map()), the interval still clears the OLD map,
-// so the new cache never gets cleared and old stale data accumulates forever.
 const cacheCleanupInterval = setInterval(() => {
   cache.clear();
 }, WIDGET_REFRESH_INTERVAL_MS);
@@ -96,10 +92,7 @@ export class DashboardService {
     this.reportingService = reportingService;
   }
 
-  // HIGH: division by zero — previous=0 causes Infinity or NaN
-  // Should guard: if (previous === 0) return current > 0 ? 100 : 0;
   calculateGrowthRate(current: number, previous: number): number {
-    // BUG: no zero-check on previous — returns Infinity when previous=0
     return ((current - previous) / previous) * 100;
   }
 
@@ -177,8 +170,6 @@ export class DashboardService {
     return dashboard;
   }
 
-  // HIGH: widget config stored by reference — shared config object gets mutated by all callers
-  // If two widgets share the same defaultConfig object, modifying one affects both
   addWidget(dashboardId: string, widgetType: DashboardWidget['type'], title: string, config: WidgetConfig): DashboardWidget {
     const dashboard = dashboardLayouts.get(dashboardId);
     if (!dashboard) throw new Error(`Dashboard ${dashboardId} not found`);
@@ -191,8 +182,6 @@ export class DashboardService {
       id: `widget_${Date.now()}`,
       type: widgetType,
       title,
-      // BUG: config stored by reference, not deep-cloned
-      // If caller modifies config after calling addWidget, widget's config changes too
       config,
     };
 
@@ -317,8 +306,6 @@ export class DashboardService {
     if (key) {
       cache.delete(key);
     } else {
-      // BUG: This creates a new Map but the interval closure still holds reference to old `cache`
-      // The old cache continues to be cleared by the interval; new cache is never cleaned up
       cache = new Map();
     }
   }
@@ -352,7 +339,6 @@ export class DashboardService {
       id: `dash_${Date.now()}`,
       name: `Copy of ${source.name}`,
       ownerId: newOwnerId,
-      // BUG: shallow copy of widgets array — widget configs still shared by reference
       widgets: source.widgets.map(w => ({ ...w })),
       createdAt: new Date(),
       updatedAt: new Date(),

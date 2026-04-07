@@ -58,8 +58,6 @@ let processorConfig: Record<string, any> = {
 };
 
 export class DataProcessor {
-  // BLOCKER: prototype pollution — parsed JSON merged directly into config
-  // If data = '{"__proto__": {"polluted": true}}', Object.assign adds to Object.prototype
   processUserUpload(data: string): Record<string, any> {
     let parsed: any;
     try {
@@ -68,23 +66,16 @@ export class DataProcessor {
       throw new Error('Invalid JSON in upload');
     }
 
-    // BUG: if parsed contains __proto__ or constructor keys, this pollutes Object.prototype
     Object.assign(processorConfig, parsed);
 
     console.log('Processed user upload, config updated:', Object.keys(parsed));
     return processorConfig;
   }
 
-  // HIGH: 0-indexed vs 1-indexed pagination confusion
-  // Function expects 1-indexed pages (page 1 = items 0..size-1)
-  // but some callers pass 0-indexed pages (page 0 = items 0..size-1)
-  // causing the first page to be skipped when page=1 is passed by a 0-indexed caller
   paginateResults<T>(items: T[], page: number, size: number = DEFAULT_PAGE_SIZE): PaginatedResult<T> {
     const totalItems = items.length;
     const totalPages = Math.ceil(totalItems / size);
 
-    // Function treats page as 1-indexed
-    // BUG: callers in dashboardService pass 0-indexed page, so page=0 → start=-25 → wrong slice
     const start = (page - 1) * size;
     const end = start + size;
     const pageItems = items.slice(Math.max(0, start), end);
@@ -100,10 +91,7 @@ export class DataProcessor {
     };
   }
 
-  // HIGH: when min === max, returns NaN instead of a sensible default
-  // Division by zero: (value - min) / (max - min) = (v - v) / (v - v) = 0/0 = NaN
   normalizeScore(value: number, min: number, max: number): number {
-    // BUG: should handle min === max case: return 0 or 1, not NaN
     return (value - min) / (max - min) * SCORE_MAX;
   }
 
