@@ -28,7 +28,7 @@
       "name": "Qodo",
       "botLogin": "qodo-code-review[bot]",
       "checkName": null,
-      "configured": true
+      "configured": false
     },
     {
       "name": "Gitar",

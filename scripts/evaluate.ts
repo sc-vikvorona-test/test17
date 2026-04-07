@@ -46,6 +46,7 @@ interface Tool {
   name: string;
   botLogin: string | string[];
   checkName: string | null;
+  configured?: boolean;
 }
 
 interface EvaluationInput {
@@ -63,6 +64,7 @@ interface ToolComment {
   path?: string;
   line?: number;
   createdAt: string;
+  isReview: boolean; // true = inline diff comment, false = issue/summary comment
 }
 
 interface ToolStats {
@@ -81,6 +83,10 @@ export interface ToolRating {
   blockersTotal: number;
   highsCaught: number;
   highsTotal: number;
+  extraCount: number;
+  mediumCount: number;
+  fpCount: number;
+  noiseCount: number;
   commentCount: number;
   responseTimeSec: number | null;
 }
@@ -121,22 +127,13 @@ async function fetchPrDiff(
   repo: string,
   prNumber: number
 ): Promise<string> {
-  const files = await octokit.paginate(octokit.pulls.listFiles, {
+  const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
     owner,
     repo,
     pull_number: prNumber,
-    per_page: 100,
+    headers: { accept: "application/vnd.github.diff" },
   });
-
-  const parts: string[] = [];
-  for (const file of files) {
-    parts.push(`--- ${file.filename} (+${file.additions}/-${file.deletions})`);
-    if (file.patch) {
-      parts.push(file.patch);
-    }
-    parts.push("");
-  }
-  return parts.join("\n");
+  return response.data as unknown as string;
 }
 
 async function fetchPrComments(
@@ -146,7 +143,7 @@ async function fetchPrComments(
   prNumber: number,
   loginToTool: Map<string, string>
 ): Promise<ToolComment[]> {
-  const [reviewComments, issueComments] = await Promise.all([
+  const [reviewComments, issueComments, reviews] = await Promise.all([
     octokit.paginate(octokit.pulls.listReviewComments, {
       owner,
       repo,
@@ -157,6 +154,12 @@ async function fetchPrComments(
       owner,
       repo,
       issue_number: prNumber,
+      per_page: 100,
+    }),
+    octokit.paginate(octokit.pulls.listReviews, {
+      owner,
+      repo,
+      pull_number: prNumber,
       per_page: 100,
     }),
   ]);
@@ -172,6 +175,7 @@ async function fetchPrComments(
         path: c.path,
         line: c.line ?? c.original_line ?? undefined,
         createdAt: c.created_at,
+        isReview: true,
       });
     }
   }
@@ -183,6 +187,19 @@ async function fetchPrComments(
         tool,
         body: c.body ?? "",
         createdAt: c.created_at,
+        isReview: false,
+      });
+    }
+  }
+
+  for (const r of reviews) {
+    const tool = loginToTool.get(r.user?.login ?? "");
+    if (tool && r.body) {
+      comments.push({
+        tool,
+        body: r.body,
+        createdAt: r.submitted_at ?? new Date().toISOString(),
+        isReview: false,
       });
     }
   }
@@ -200,16 +217,20 @@ function computeToolStats(
 
   for (const tool of tools) {
     const comments = toolComments.filter((c) => c.tool === tool.name);
+    // Speed = time to first inline review comment only (not summary/issue comments)
+    const reviewComments = comments.filter((c) => c.isReview);
     if (comments.length === 0) {
       stats.set(tool.name, { commentCount: 0, responseTimeSec: null });
       continue;
     }
-    const firstMs = comments
-      .map((c) => new Date(c.createdAt).getTime())
-      .sort((a, b) => a - b)[0];
+    const firstReviewMs = reviewComments.length > 0
+      ? reviewComments.map((c) => new Date(c.createdAt).getTime()).sort((a, b) => a - b)[0]
+      : null;
     stats.set(tool.name, {
       commentCount: comments.length,
-      responseTimeSec: Math.round((firstMs - prCreatedMs) / 1000),
+      responseTimeSec: firstReviewMs === null
+        ? null
+        : Math.round((firstReviewMs - prCreatedMs) / 1000),
     });
   }
 
@@ -261,7 +282,7 @@ function buildPrompt(
       const s = toolStats.get(tool.name)!;
       const speed =
         s.responseTimeSec === null
-          ? "did not comment"
+          ? s.commentCount > 0 ? "no inline comment" : "did not comment"
           : `${Math.floor(s.responseTimeSec / 60)}m${s.responseTimeSec % 60}s`;
       return `  ${tool.name}: ${s.commentCount} comments, first at ${speed}`;
     })
@@ -296,7 +317,7 @@ function buildPrompt(
 </scenario>
 
 <planted-issues>
-These are the intentional issues introduced into this PR. They are ground truth.
+These are the intentional issues introduced into this PR. They serve as ground truth for recall measurement.
 ${plantedSection}
 </planted-issues>
 
@@ -313,9 +334,18 @@ ${diff.slice(0, DIFF_CHAR_LIMIT)}
 ${toolSections}
 </tool-comments>
 
-Evaluate each tool's performance on this specific PR. You have the full diff and know exactly what was planted. Use your own judgment — there is no prescribed rubric or scoring formula. The evaluation focus above describes what matters most for this particular scenario.
+## Evaluation instructions
 
-For each tool, count how many of the BLOCKER issues and HIGH issues it actually caught based on its comments. A tool catches an issue if it correctly identifies the underlying problem — it doesn't need to use the exact same words, but the bug must be clearly recognized. Be strict: vague comments that mention a file without identifying the specific bug don't count.
+**Step 1 — Read the diff independently.**
+Before looking at any tool's comments, study the diff yourself. Form your own view of what issues are present: bugs, logic errors, security problems, design issues. This independent reading is your ground truth for judging FPs and for spotting issues that tools missed or found beyond the planted list.
+
+**Step 2 — Evaluate each tool's comments against both the planted list and your own analysis.**
+- A tool catches a planted issue if it correctly identifies the underlying problem — exact wording doesn't matter but the specific bug must be recognized. Be strict: vague comments that mention a file or area without identifying the actual bug don't count.
+- If a tool flags something NOT in the planted list: verify it against the diff yourself. If it is a real problem in the code, note it in the verdict as a bonus finding — do NOT count it as a false positive. Only count as FP if you have verified the code is actually correct at the flagged location.
+- A "noise" comment is technically valid but low-value: style nitpicks, trivial naming suggestions, or observations obvious from context.
+
+**Step 3 — Assess depth of analysis.**
+Did the tool demonstrate genuine understanding of the code, or did it only catch surface-level or obvious issues? Flag in the verdict if a tool's findings appear shallow (e.g., only caught issues that were trivially visible without real code comprehension).
 
 For tools that did not comment at all, assign F and note they skipped the PR.
 
@@ -327,13 +357,17 @@ Respond with only a JSON object using this structure (tool names must match exac
   "perTool": {
     "<tool name>": {
       "rating": "<letter grade, e.g. A, B+, C-, F>",
-      "verdict": "<2-3 sentences: your honest assessment>",
+      "verdict": "<2-3 sentences: your honest assessment, including depth of analysis and any bonus findings>",
       "plantedIssuesCaught": ["<brief description of each planted issue this tool caught>"],
       "plantedIssuesMissed": ["<brief description of each planted issue this tool missed>"],
       "notableComment": "<the single most useful or interesting comment this tool made, or null>",
       "noiseAssessment": "<brief: did the tool focus on what matters or scatter? mention comment volume if high>",
-      "blockersCaught": <integer: how many BLOCKER issues this tool caught>,
-      "highsCaught": <integer: how many HIGH issues this tool caught>
+      "blockersCaught": <integer: how many planted BLOCKER issues this tool caught>,
+      "highsCaught": <integer: how many planted HIGH issues this tool caught>,
+      "extraCount": <integer: real unplanted findings at blocker or important severity — e.g. a security vulnerability, data loss risk, or serious bug the tool found that was not on the planted list>,
+      "mediumCount": <integer: real unplanted findings that are valid but not critical — e.g. an off-by-one, missing edge case, or logic error that the tool correctly identified but that was not planted and is not severe enough to be Extra>,
+      "fpCount": <integer: comments flagging code that you verified is actually correct — only after checking the diff>,
+      "noiseCount": <integer: valid but a human author would just wave off — style nitpicks, trivial naming suggestions, observations obvious from context>
     }
   }
 }`;
@@ -347,17 +381,59 @@ async function evaluateScenario(
   const { scenario, prEntry, diff, toolComments, tools, toolStats } = input;
   const prompt = buildPrompt(scenario, diff, toolComments, tools, toolStats);
 
+  const evalStart = Date.now();
+  const toolRatingSchema = {
+    type: "object" as const,
+    properties: {
+      rating: { type: "string" },
+      verdict: { type: "string" },
+      plantedIssuesCaught: { type: "array", items: { type: "string" } },
+      plantedIssuesMissed: { type: "array", items: { type: "string" } },
+      notableComment: { type: ["string", "null"] },
+      noiseAssessment: { type: "string" },
+      blockersCaught: { type: "integer" },
+      highsCaught: { type: "integer" },
+      extraCount: { type: "integer" },
+      mediumCount: { type: "integer" },
+      fpCount: { type: "integer" },
+      noiseCount: { type: "integer" },
+    },
+    required: ["rating", "verdict", "plantedIssuesCaught", "plantedIssuesMissed",
+      "notableComment", "noiseAssessment", "blockersCaught", "highsCaught",
+      "extraCount", "mediumCount", "fpCount", "noiseCount"],
+  };
+
+  const perToolProperties: Record<string, unknown> = {};
+  for (const tool of tools) {
+    perToolProperties[tool.name] = toolRatingSchema;
+  }
+
   const message = await anthropic.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: 16384,
+    tools: [{
+      name: "submit_evaluation",
+      description: "Submit the completed scenario evaluation",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          scenarioId: { type: "string" },
+          prNumber: { type: "integer" },
+          evaluationFocus: { type: "string" },
+          perTool: { type: "object", properties: perToolProperties },
+        },
+        required: ["scenarioId", "prNumber", "evaluationFocus", "perTool"],
+      },
+    }],
+    tool_choice: { type: "tool", name: "submit_evaluation" },
     messages: [{ role: "user", content: prompt }],
   });
 
-  const text =
-    message.content[0].type === "text" ? message.content[0].text : "";
+  const evalMs = Date.now() - evalStart;
+  console.log(`Claude evaluation for ${scenario.id} took ${Math.round(evalMs / 1000)}s`);
 
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  const jsonText = jsonMatch ? jsonMatch[0] : text;
+  const toolUse = message.content.find((b) => b.type === "tool_use");
+  const jsonText = toolUse ? JSON.stringify((toolUse as { type: "tool_use"; input: unknown }).input) : "";
 
   const blockersTotal = scenario.plantedIssues.filter(
     (i) => i.severity === "blocker"
@@ -382,13 +458,17 @@ async function evaluateScenario(
         rating.highsTotal = highsTotal;
         rating.blockersCaught = Math.min(rating.blockersCaught ?? 0, blockersTotal);
         rating.highsCaught = Math.min(rating.highsCaught ?? 0, highsTotal);
+        rating.extraCount = rating.extraCount ?? 0;
+        rating.mediumCount = rating.mediumCount ?? 0;
+        rating.fpCount = rating.fpCount ?? 0;
+        rating.noiseCount = rating.noiseCount ?? 0;
       }
     }
     result = parsed;
   } catch {
     console.error(
       `Failed to parse Claude response for ${scenario.id}:`,
-      text.slice(0, ERROR_PREVIEW_LENGTH)
+      jsonText.slice(0, ERROR_PREVIEW_LENGTH)
     );
     result = {
       scenarioId: scenario.id,
@@ -410,6 +490,10 @@ async function evaluateScenario(
               blockersTotal,
               highsCaught: 0,
               highsTotal,
+              extraCount: 0,
+              mediumCount: 0,
+              fpCount: 0,
+              noiseCount: 0,
               commentCount: stats.commentCount,
               responseTimeSec: stats.responseTimeSec,
             },
@@ -427,7 +511,7 @@ async function main(): Promise<void> {
   const repoFull = required("GITHUB_REPO");
   const prMatrixRaw = required("PR_MATRIX");
   const anthropicKey = required("ANTHROPIC_API_KEY");
-  const model = process.env.ANTHROPIC_MODEL ?? "claude-opus-4-6";
+  const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
 
   const [owner, repo] = repoFull.split("/");
   const prs: PrEntry[] = JSON.parse(prMatrixRaw);
@@ -435,9 +519,10 @@ async function main(): Promise<void> {
   const scenariosPath = resolve(__dirname, "../scenarios.json");
   const toolsPath = resolve(__dirname, "../tools.json");
   const scenarios: Scenario[] = JSON.parse(readFileSync(scenariosPath, "utf-8"));
-  const { tools }: { tools: Tool[] } = JSON.parse(
+  const { tools: allTools }: { tools: Tool[] } = JSON.parse(
     readFileSync(toolsPath, "utf-8")
   );
+  const tools = allTools.filter((t) => t.configured !== false);
 
   const loginToTool = buildLoginToToolMap(tools);
 

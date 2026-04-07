@@ -23,7 +23,10 @@
       { "severity": "blocker", "description": "Division before zero-check: dept average tax computed before checking employee count is non-zero — abends on empty dept" },
       { "severity": "high", "description": "SS wage base check inverted — SS tax applied when salary EXCEEDS wage base instead of when below" },
       { "severity": "high", "description": "State tax rate table indexed without bounds check — invalid dept codes silently apply wrong rate" },
-      { "severity": "high", "description": "Output record written before NET-PAY field is populated — uninitialized field in every output record" }
+      { "severity": "high", "description": "Output record written before NET-PAY field is populated — uninitialized field in every output record" },
+      { "severity": "blocker", "description": "DECIMAL-POINT IS COMMA in SPECIAL-NAMES conflicts with numeric literals using periods — program fails to compile or produces wrong values" },
+      { "severity": "high", "description": "WS-DEPT-DETAIL-LINE defined as 146 bytes but REPORT-RECORD is 132 bytes — MOVE truncates trailing fields silently" },
+      { "severity": "high", "description": "Federal tax bracket base amounts wrong for brackets 3–6 — WS-BRKT-BASE values are mathematically inconsistent with the bracket boundaries and rates, producing incorrect federal tax for any employee earning above $44,725" }
     ]
   },
   {
@@ -73,7 +76,12 @@
       { "severity": "high", "description": "merge_data_sources() silently drops records with None keys" },
       { "severity": "high", "description": "calculate_percentile() sorts copy but indexes original unsorted list" },
       { "severity": "high", "description": "format_currency() rounds then formats using pre-round value" },
-      { "severity": "high", "description": "build_comparison_table() divides by previous value with no zero guard" }
+      { "severity": "high", "description": "build_comparison_table() divides by previous value with no zero guard" },
+      { "severity": "high", "description": "compute_growth_rate() references 'rate' variable in except branch before assignment — guaranteed NameError crash" },
+      { "severity": "high", "description": "compute_ltv() calls sqlite3.Row.get() which doesn't exist — refund subtraction always crashes" },
+      { "severity": "high", "description": "HTML report generation uses unescaped user-controlled values — stored XSS" },
+      { "severity": "high", "description": "score_user() falls back to random.random() when model is unavailable — same user gets different risk scores on every call, making scoring non-deterministic and meaningless" },
+      { "severity": "high", "description": "run_full_analytics() and compute_ltv() cache keys omit query-shaping parameters (filters, agg, sort, include_refunds, segment) — different queries return identical stale cached results" }
     ]
   },
   {
@@ -88,6 +96,9 @@
       { "severity": "blocker", "description": "SQL injection in SubscriptionRepository.searchSubscriptions() — query concatenated into LIKE clause, disguised by comment 'sanitized at controller layer'" },
       { "severity": "high", "description": "createSubscription() has no transaction — subscription and audit log inserted separately, inconsistency if audit fails" },
       { "severity": "high", "description": "updateNextPaymentDate() swallows SQLException cause — re-throws as new RuntimeException(e.getMessage())" },
+      { "severity": "high", "description": "processSubscription() has no failure path after payment decline — loops indefinitely on a declined card" },
+      { "severity": "high", "description": "processSubscription() calls updateNextPaymentDate() after charging — if that update fails, customer is charged again next run" },
+      { "severity": "high", "description": "createSubscription() inserts into audit_log table that has no DDL anywhere — crashes on first call with table-not-found" },
       { "severity": "smell", "description": "processAllDueSubscriptions() filters in Java instead of SQL WHERE clause" },
       { "severity": "smell", "description": "calculateNextPaymentDate() re-implements LocalDate.plusDays() in 18 lines" },
       { "severity": "smell", "description": "Duplicate validateAmount/validateSubscriptionAmount helpers with unnecessary indirection" },

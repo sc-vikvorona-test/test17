@@ -18,6 +18,10 @@ interface ToolRating {
   blockersTotal: number;
   highsCaught: number;
   highsTotal: number;
+  extraCount: number;
+  mediumCount: number;
+  fpCount: number;
+  noiseCount: number;
   commentCount: number;
   responseTimeSec: number | null;
 }
@@ -122,7 +126,7 @@ function tableBlock(rows: string[][]): object {
   };
 }
 
-function buildSlackPayload(
+function buildMainPayload(
   results: ScenarioEvaluation[],
   issueUrl: string
 ): object {
@@ -148,7 +152,6 @@ function buildSlackPayload(
     })
     .join("\n");
 
-  // Scorecard table: tools as rows, scenarios as columns + overall
   const scenarioIds = results.map((r) => r.scenarioId);
   const scorecardHeader = [
     "Tool",
@@ -163,43 +166,6 @@ function buildSlackPayload(
     });
     return [r.name, ...scenarioCells, `${ratingEmoji(r.overall)} ${r.overall}`];
   });
-
-  // Per-scenario detail tables
-  const scenarioBlocks: object[] = [];
-  for (const result of results) {
-    const emoji = SCENARIO_EMOJI[result.scenarioId] ?? "📋";
-    const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
-    const focus = SCENARIO_FOCUS[result.scenarioId] ?? "";
-
-    const detailHeader = ["Tool", "Grade", "Blockers", "Highs", "Comments", "Speed"];
-    const detailRows: string[][] = toolNames.map((name) => {
-      const t = result.perTool[name];
-      if (!t) return [name, "?", "—", "—", "—", "—"];
-      const blockers =
-        t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
-      const highs =
-        t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
-      return [
-        name,
-        `${ratingEmoji(t.rating)} ${t.rating}`,
-        blockers,
-        highs,
-        String(t.commentCount),
-        formatSpeed(t.responseTimeSec),
-      ];
-    });
-
-    scenarioBlocks.push(
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `${emoji} *${label}* _— ${focus}_`,
-        },
-      },
-      tableBlock([detailHeader, ...detailRows])
-    );
-  }
 
   return {
     blocks: [
@@ -224,8 +190,6 @@ function buildSlackPayload(
       },
       tableBlock([scorecardHeader, ...scorecardRows]),
       { type: "divider" },
-      ...scenarioBlocks,
-      { type: "divider" },
       {
         type: "section",
         text: {
@@ -239,36 +203,135 @@ function buildSlackPayload(
   };
 }
 
-async function main(): Promise<void> {
-  const webhookUrl = required("SLACK_WEBHOOK_URL");
-  const issueUrl = process.env.ISSUE_URL ?? "";
+function buildScenarioPayload(
+  result: ScenarioEvaluation,
+  toolNames: string[]
+): object {
+  const emoji = SCENARIO_EMOJI[result.scenarioId] ?? "📋";
+  const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
+  const focus = SCENARIO_FOCUS[result.scenarioId] ?? "";
 
-  let results: ScenarioEvaluation[];
-  try {
-    const raw =
-      process.env.EVALUATION_JSON ??
-      readFileSync("/tmp/evaluation.json", "utf-8");
-    results = JSON.parse(raw);
-  } catch {
-    results = [];
-    console.warn("No evaluation results found");
-  }
+  const detailHeader = ["Tool", "Grade", "Blocker", "Important", "Extra", "Medium", "FP", "Noise", "Speed"];
+  const detailRows: string[][] = toolNames.map((name) => {
+    const t = result.perTool[name];
+    if (!t) return [name, "?", "—", "—", "—", "—", "—", "—", "—"];
+    const blockers = t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
+    const highs = t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
+    return [
+      name,
+      `${ratingEmoji(t.rating)} ${t.rating}`,
+      blockers,
+      highs,
+      t.extraCount > 0 ? String(t.extraCount) : "—",
+      t.mediumCount > 0 ? String(t.mediumCount) : "—",
+      t.fpCount > 0 ? String(t.fpCount) : "—",
+      t.noiseCount > 0 ? String(t.noiseCount) : "—",
+      formatSpeed(t.responseTimeSec),
+    ];
+  });
 
-  const payload = buildSlackPayload(results, issueUrl);
+  const verdictBlocks = toolNames
+    .flatMap((name) => {
+      const t = result.perTool[name];
+      if (!t?.verdict) return [];
+      return [{
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${name}:* ${t.verdict}`.slice(0, 3000),
+        },
+      }];
+    });
 
-  const response = await fetch(webhookUrl, {
+  return {
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${emoji} *${label}* _— ${focus}_`,
+        },
+      },
+      tableBlock([detailHeader, ...detailRows]),
+      ...verdictBlocks,
+    ],
+  };
+}
+
+async function postToSlack(
+  token: string,
+  body: object
+): Promise<{ ok: boolean; ts?: string; error?: string }> {
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Slack webhook failed: ${response.status} ${await response.text()}`
-    );
+    throw new Error(`Slack API error: ${response.status} ${await response.text()}`);
   }
 
-  console.log("Slack notification sent successfully");
+  return response.json() as Promise<{ ok: boolean; ts?: string; error?: string }>;
+}
+
+async function main(): Promise<void> {
+  const token = required("SLACK_TOKEN");
+  const channel = required("SLACK_CHANNEL");
+  const issueUrl = process.env.RUN_URL ?? process.env.ISSUE_URL ?? "";
+
+  let results: ScenarioEvaluation[];
+  const parseJson = (s: string): ScenarioEvaluation[] => JSON.parse(s);
+  if (process.env.EVALUATION_JSON) {
+    try {
+      results = parseJson(process.env.EVALUATION_JSON);
+    } catch {
+      try {
+        results = parseJson(readFileSync("/tmp/evaluation.json", "utf-8"));
+      } catch {
+        results = [];
+        console.warn("No evaluation results found");
+      }
+    }
+  } else {
+    try {
+      results = parseJson(readFileSync("/tmp/evaluation.json", "utf-8"));
+    } catch {
+      results = [];
+      console.warn("No evaluation results found");
+    }
+  }
+
+  const mainPayload = buildMainPayload(results, issueUrl);
+  const mainData = await postToSlack(token, { channel, ...mainPayload });
+  if (!mainData.ok) {
+    throw new Error(`Slack API error: ${mainData.error}`);
+  }
+  if (!mainData.ts) {
+    throw new Error("Slack response missing ts — cannot post thread replies");
+  }
+  console.log("Slack main message sent successfully");
+
+  if (results.length === 0) return;
+
+  const threadTs = mainData.ts;
+  const toolNames = Object.keys(results[0].perTool);
+
+  for (const result of results) {
+    const scenarioPayload = buildScenarioPayload(result, toolNames);
+    const scenarioData = await postToSlack(token, {
+      channel,
+      thread_ts: threadTs,
+      ...scenarioPayload,
+    });
+    if (!scenarioData.ok) {
+      throw new Error(`Slack API error posting scenario ${result.scenarioId}: ${scenarioData.error}`);
+    }
+    console.log(`Slack thread reply sent for scenario: ${result.scenarioId}`);
+  }
 }
 
 try {

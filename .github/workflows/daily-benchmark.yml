@@ -59,7 +59,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      checks: read
+      pull-requests: read
+      issues: read
     outputs:
       checks-summary: ${{ steps.wait.outputs.checks-summary }}
     steps:
