@@ -8,18 +8,20 @@ function required(name: string): string {
   return value;
 }
 
-interface ToolEvaluation {
-  issuesFound: number;
-  falsePositives: number;
-  commentQuality: number;
-  notableFinding: string | null;
+interface ToolRating {
+  rating: string;
+  verdict: string;
+  plantedIssuesCaught: string[];
+  plantedIssuesMissed: string[];
+  notableComment: string | null;
+  noiseAssessment: string;
 }
 
-interface EvaluationResult {
+interface ScenarioEvaluation {
   scenarioId: string;
   prNumber: number;
-  expectedIssueCount: number;
-  perTool: Record<string, ToolEvaluation>;
+  evaluationFocus: string;
+  perTool: Record<string, ToolRating>;
 }
 
 interface PrEntry {
@@ -31,65 +33,64 @@ interface PrEntry {
 interface Scenario {
   id: string;
   prTitle: string;
-  category: string;
-  expectedIssues: { security: number; bugs: number; smells: number };
+  evaluationFocus: string;
 }
 
-interface ToolSummary {
-  name: string;
-  totalFound: number;
-  totalExpected: number;
-  detectionRate: number;
-  totalFalsePositives: number;
-  falsePositivesOnClean: number;
-  avgCommentQuality: number;
-  timedOutCount: number;
+const SCENARIO_LABELS: Record<string, string> = {
+  "clean-ts": "✅ Clean PR",
+  "cobol-payroll": "🗿 COBOL",
+  "huge-ts": "🔥 Huge TypeScript",
+  "spaghetti-python": "🌀 Python Spaghetti",
+  "balanced-java": "☕ Balanced Java",
+};
+
+const SCENARIO_FOCUS: Record<string, string> = {
+  "clean-ts": "false positive test",
+  "cobol-payroll": "exotic language",
+  "huge-ts": "prioritization under load",
+  "spaghetti-python": "signal vs noise",
+  "balanced-java": "precision benchmark",
+};
+
+const GRADE_SCORES: Record<string, number> = {
+  "A+": 4.3, A: 4, "A-": 3.7,
+  "B+": 3.3, B: 3, "B-": 2.7,
+  "C+": 2.3, C: 2, "C-": 1.7,
+  "D+": 1.3, D: 1, "D-": 0.7,
+  F: 0,
+};
+
+const GRADE_THRESHOLDS: Array<[number, string]> = [
+  [4.15, "A+"], [3.85, "A"], [3.5, "A-"],
+  [3.15, "B+"], [2.85, "B"], [2.5, "B-"],
+  [2.15, "C+"], [1.85, "C"], [1.5, "C-"],
+  [1.15, "D+"], [0.85, "D"], [0.5, "D-"],
+];
+
+function gradeToNumber(grade: string): number {
+  return GRADE_SCORES[grade] ?? 2;
 }
 
-function computeToolSummaries(
-  results: EvaluationResult[],
+function numberToGrade(n: number): string {
+  for (const [threshold, grade] of GRADE_THRESHOLDS) {
+    if (n >= threshold) return grade;
+  }
+  return "F";
+}
+
+function computeOverallRatings(
+  results: ScenarioEvaluation[],
   toolNames: string[]
-): ToolSummary[] {
-  return toolNames.map((toolName) => {
-    const issueResults = results.filter((r) => r.expectedIssueCount > 0);
-    const cleanResults = results.filter((r) => r.expectedIssueCount === 0);
-
-    const totalFound = issueResults.reduce(
-      (sum, r) => sum + (r.perTool[toolName]?.issuesFound ?? 0),
-      0
-    );
-    const totalExpected = issueResults.reduce(
-      (sum, r) => sum + r.expectedIssueCount,
-      0
-    );
-    const totalFalsePositives = results.reduce(
-      (sum, r) => sum + (r.perTool[toolName]?.falsePositives ?? 0),
-      0
-    );
-    const falsePositivesOnClean = cleanResults.reduce(
-      (sum, r) => sum + (r.perTool[toolName]?.falsePositives ?? 0),
-      0
-    );
-    const qualityScores = results
-      .map((r) => r.perTool[toolName]?.commentQuality)
-      .filter((q): q is number => q !== undefined);
-    const avgCommentQuality =
-      qualityScores.length > 0
-        ? qualityScores.reduce((a, b) => a + b, 0) / qualityScores.length
-        : 0;
-    const timedOutCount = 0;
-
-    return {
-      name: toolName,
-      totalFound,
-      totalExpected,
-      detectionRate: totalExpected > 0 ? (totalFound / totalExpected) * 100 : 0,
-      totalFalsePositives,
-      falsePositivesOnClean,
-      avgCommentQuality,
-      timedOutCount,
-    };
-  });
+): Array<{ name: string; overall: string; score: number }> {
+  return toolNames
+    .map((name) => {
+      const scores = results
+        .map((r) => r.perTool[name]?.rating ?? "C")
+        .map(gradeToNumber);
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      return { name, score: avg, overall: numberToGrade(avg) };
+    })
+    .sort((a, b) => b.score - a.score);
 }
 
 function formatDate(): string {
@@ -97,86 +98,77 @@ function formatDate(): string {
 }
 
 function buildIssueBody(
-  results: EvaluationResult[],
-  toolSummaries: ToolSummary[],
+  results: ScenarioEvaluation[],
   scenarios: Scenario[],
   prs: PrEntry[],
   runUrl: string
 ): string {
   const date = formatDate();
-  const toolNames = toolSummaries.map((t) => t.name);
+  const toolNames =
+    results.length > 0 ? Object.keys(results[0].perTool) : [];
+  const rankings = computeOverallRatings(results, toolNames);
 
-  const summaryTable = [
-    `| Tool | Detection Rate | False Positives (total) | FP on Clean PR | Avg Comment Quality |`,
-    `|------|---------------|------------------------|----------------|---------------------|`,
-    ...toolSummaries.map(
-      (t) =>
-        `| ${t.name} | ${t.totalFound}/${t.totalExpected} (${t.detectionRate.toFixed(0)}%) | ${t.totalFalsePositives} | ${t.falsePositivesOnClean} | ${t.avgCommentQuality.toFixed(1)}/5 |`
-    ),
-  ].join("\n");
+  const rankingLines = rankings
+    .map((r, i) => `${i + 1}. **${r.name}** — ${r.overall}`)
+    .join("\n");
 
-  const scenarioHeader =
-    `| Scenario | Category | Expected |` +
-    toolNames.map((n) => ` ${n} |`).join("");
-  const scenarioSeparator =
-    `|----------|----------|----------|` +
-    toolNames.map(() => `----------|`).join("");
-
-  const scenarioRows = results
+  const scenarioSections = results
     .map((result) => {
       const scenario = scenarios.find((s) => s.id === result.scenarioId);
       const pr = prs.find((p) => p.scenarioId === result.scenarioId);
-      const scenarioLink = pr
-        ? `[${result.scenarioId}](${pr.prUrl})`
-        : result.scenarioId;
-      const category = scenario?.category ?? "?";
-      const toolCells = toolNames
+      const label = SCENARIO_LABELS[result.scenarioId] ?? result.scenarioId;
+      const focus = SCENARIO_FOCUS[result.scenarioId] ?? result.evaluationFocus;
+      const prLink = pr ? ` — [PR #${pr.prNumber}](${pr.prUrl})` : "";
+      const title = scenario?.prTitle ?? result.scenarioId;
+
+      const toolRows = toolNames
         .map((name) => {
-          const evaluation = result.perTool[name];
-          if (!evaluation) return " — ";
-          if (result.expectedIssueCount === 0) {
-            return evaluation.falsePositives === 0 ? " ✅ 0 FP " : ` ⚠️ ${evaluation.falsePositives} FP `;
-          }
-          return ` ${evaluation.issuesFound}/${result.expectedIssueCount} `;
+          const t = result.perTool[name];
+          if (!t) return `| ${name} | ? | — | — |`;
+          const caught = t.plantedIssuesCaught.length;
+          const missed = t.plantedIssuesMissed.length;
+          const total = caught + missed;
+          const catchRate = total > 0 ? `${caught}/${total}` : "n/a";
+          return `| ${name} | **${t.rating}** | ${catchRate} | ${t.noiseAssessment} |`;
         })
-        .join("|");
-      return `| ${scenarioLink} | ${category} | ${result.expectedIssueCount} |${toolCells}|`;
+        .join("\n");
+
+      const verdicts = toolNames
+        .map((name) => {
+          const t = result.perTool[name];
+          if (!t) return "";
+          const notable = t.notableComment
+            ? `\n  > *"${t.notableComment.slice(0, 200)}"*`
+            : "";
+          return `**${name}:** ${t.verdict}${notable}`;
+        })
+        .filter(Boolean)
+        .join("\n\n");
+
+      return `### ${label}${prLink}
+*${title}* — ${focus}
+
+| Tool | Rating | Issues caught | Signal/noise |
+|------|--------|---------------|--------------|
+${toolRows}
+
+${verdicts}`;
     })
-    .join("\n");
-
-  const notableFindings: string[] = [];
-  for (const result of results) {
-    for (const [toolName, evaluation] of Object.entries(result.perTool)) {
-      if (evaluation.notableFinding) {
-        notableFindings.push(
-          `- **${toolName}** on \`${result.scenarioId}\`: ${evaluation.notableFinding}`
-        );
-      }
-    }
-  }
-
-  const prLinks = prs
-    .map((p) => `- [${p.scenarioId} — PR #${p.prNumber}](${p.prUrl})`)
-    .join("\n");
+    .join("\n\n---\n\n");
 
   return `# Benchmark Report — ${date}
 
-## Summary
+## Overall Rankings
 
-${summaryTable}
+${rankingLines}
 
-## Per-Scenario Breakdown
+---
 
-${scenarioHeader}
-${scenarioSeparator}
-${scenarioRows}
+## Per-Scenario Results
 
-> Numbers show **issues found / total expected** for issue PRs, and **false positives** for the clean PR.
+${scenarioSections}
 
-${notableFindings.length > 0 ? `## Notable Findings\n\n${notableFindings.join("\n")}\n` : ""}
-## Links
-
-${prLinks}
+---
 
 [View Actions Run](${runUrl})`;
 }
@@ -188,33 +180,25 @@ async function main(): Promise<void> {
 
   const [owner, repo] = repoFull.split("/");
 
-  let results: EvaluationResult[];
+  let results: ScenarioEvaluation[];
   try {
     const raw =
-      process.env.EVALUATION_JSON ?? readFileSync("/tmp/evaluation.json", "utf-8");
+      process.env.EVALUATION_JSON ??
+      readFileSync("/tmp/evaluation.json", "utf-8");
     results = JSON.parse(raw);
   } catch {
     results = [];
     console.warn("No evaluation results found, creating failure report");
   }
 
-  const scenariosRaw =
-    process.env.SCENARIOS_JSON ??
-    readFileSync(
-      new URL("../scenarios.json", import.meta.url).pathname,
-      "utf-8"
-    );
-  const scenarios: Scenario[] = JSON.parse(scenariosRaw);
+  const scenariosPath = new URL("../scenarios.json", import.meta.url).pathname;
+  const scenarios: Scenario[] = JSON.parse(readFileSync(scenariosPath, "utf-8"));
 
   const prs: PrEntry[] = process.env.PR_MATRIX
     ? JSON.parse(process.env.PR_MATRIX)
     : [];
 
-  const toolNames =
-    results.length > 0 ? Object.keys(results[0].perTool) : ["(no data)"];
-  const toolSummaries = computeToolSummaries(results, toolNames);
-
-  const body = buildIssueBody(results, toolSummaries, scenarios, prs, runUrl);
+  const body = buildIssueBody(results, scenarios, prs, runUrl);
 
   const octokit = new Octokit({ auth: token });
   const { data } = await octokit.issues.create({
@@ -226,6 +210,14 @@ async function main(): Promise<void> {
   });
 
   console.log(`Created GitHub Issue #${data.number}: ${data.html_url}`);
+
+  if (process.env.GITHUB_OUTPUT) {
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `issue-url=${data.html_url}\n`
+    );
+  }
 }
 
 try {

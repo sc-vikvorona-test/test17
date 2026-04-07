@@ -1,102 +1,97 @@
 [
   {
-    "id": "auth-overhaul-ts",
-    "branch": "scenario/auth-overhaul-ts",
-    "sourceTag": "scenario-source/auth-overhaul-ts",
-    "prTitle": "feat: overhaul authentication system with JWT refresh tokens",
-    "prBody": "Refactors the authentication system to support JWT refresh tokens, adds session management, and improves the login flow for better UX. Also adds rate limiting preparation and improves token validation.",
+    "id": "clean-ts",
+    "branch": "scenario/clean-ts",
+    "sourceTag": "scenario-source/clean-ts",
+    "prTitle": "feat: add discount and coupon system",
+    "prBody": "Adds a coupon/discount system allowing customers to apply promo codes at checkout. Supports percentage and flat discounts with expiry dates, usage limits, and minimum order amounts.",
     "project": "typescript-fullstack-shop",
-    "category": "security",
-    "expectedIssues": { "security": 5, "bugs": 3, "smells": 8 }
+    "evaluationFocus": "FALSE POSITIVE TEST. This is intentionally clean, well-written code with zero planted issues. The only job here is to judge whether each tool's comments are warranted. Any flag on this PR is a false positive. Rate tools by how quiet they are — silence is correct behavior.",
+    "plantedIssues": []
   },
   {
-    "id": "payment-flow-java",
-    "branch": "scenario/payment-flow-java",
-    "sourceTag": "scenario-source/payment-flow-java",
-    "prTitle": "feat: add merchant payment flow with transaction logging",
-    "prBody": "Implements the new merchant payment flow including transaction audit logging, payment search by merchant, and enhanced error reporting for failed transactions.",
-    "project": "java-payment-service",
-    "category": "security",
-    "expectedIssues": { "security": 3, "bugs": 5, "smells": 6 }
-  },
-  {
-    "id": "data-ingestion-python",
-    "branch": "scenario/data-ingestion-python",
-    "sourceTag": "scenario-source/data-ingestion-python",
-    "prTitle": "feat: add multi-source data ingestion with configurable file loading",
-    "prBody": "Adds support for loading data from multiple configurable sources, including remote file paths and dynamic source configuration. Improves throughput with parallel ingestion and adds retry logic.",
-    "project": "python-data-pipeline",
-    "category": "security",
-    "expectedIssues": { "security": 4, "bugs": 4, "smells": 10 }
-  },
-  {
-    "id": "inventory-api-ts",
-    "branch": "scenario/inventory-api-ts",
-    "sourceTag": "scenario-source/inventory-api-ts",
-    "prTitle": "feat: add inventory management API with bulk operations",
-    "prBody": "Adds REST API endpoints for bulk inventory updates, stock reservation management, and inventory reporting. Includes webhook notifications for low-stock alerts.",
-    "project": "typescript-fullstack-shop",
-    "category": "bugs",
-    "expectedIssues": { "security": 2, "bugs": 6, "smells": 12 }
-  },
-  {
-    "id": "reporting-cobol",
-    "branch": "scenario/reporting-cobol",
-    "sourceTag": "scenario-source/reporting-cobol",
-    "prTitle": "feat: add department salary summary report",
-    "prBody": "Adds a new batch report that generates department-level salary summaries with subtotals and grand total. Extends the existing batch processor with the new report logic.",
+    "id": "cobol-payroll",
+    "branch": "scenario/cobol-payroll",
+    "sourceTag": "scenario-source/cobol-payroll",
+    "prTitle": "feat: add payroll tax calculation batch processor",
+    "prBody": "Adds a new COBOL batch program that calculates federal and state payroll tax deductions for all employees. Produces per-employee deduction records and a department-level tax summary report.",
     "project": "cobol-batch-processor",
-    "category": "bugs",
-    "expectedIssues": { "security": 1, "bugs": 4, "smells": 8 }
+    "evaluationFocus": "EXOTIC LANGUAGE TEST. Evaluate: (1) Did the tool analyze COBOL at all or skip/hallucinate? (2) Did it find the real issues buried in COBOL-specific patterns? Judge whether comments show genuine COBOL understanding vs generic advice.",
+    "plantedIssues": [
+      { "severity": "blocker", "description": "Numeric overflow: WS-GROSS-TAX accumulator PIC 9(6)V99 but salary is 9(7)V99 — high earner totals silently truncate" },
+      { "severity": "blocker", "description": "Off-by-one tax bracket: >= instead of > causes employees exactly at boundary to be taxed at higher rate" },
+      { "severity": "blocker", "description": "Division before zero-check: dept average tax computed before checking employee count is non-zero — abends on empty dept" },
+      { "severity": "high", "description": "SS wage base check inverted — SS tax applied when salary EXCEEDS wage base instead of when below" },
+      { "severity": "high", "description": "State tax rate table indexed without bounds check — invalid dept codes silently apply wrong rate" },
+      { "severity": "high", "description": "Output record written before NET-PAY field is populated — uninitialized field in every output record" }
+    ]
   },
   {
-    "id": "file-ops-rust",
-    "branch": "scenario/file-ops-rust",
-    "sourceTag": "scenario-source/file-ops-rust",
-    "prTitle": "feat: add parallel file processing with output aggregation",
-    "prBody": "Extends the file processor with parallel processing support for large datasets and output file aggregation. Adds configurable batch sizes and processing statistics.",
-    "project": "rust-file-processor",
-    "category": "bugs",
-    "expectedIssues": { "security": 2, "bugs": 5, "smells": 5 }
-  },
-  {
-    "id": "order-service-ts",
-    "branch": "scenario/order-service-ts",
-    "sourceTag": "scenario-source/order-service-ts",
-    "prTitle": "feat: add order splitting and partial fulfillment support",
-    "prBody": "Adds support for splitting large orders into multiple fulfillment units and partial order completion. Integrates with inventory, cart, and notification systems for the new split-order flow.",
+    "id": "huge-ts",
+    "branch": "scenario/huge-ts",
+    "sourceTag": "scenario-source/huge-ts",
+    "prTitle": "feat: add analytics and reporting module",
+    "prBody": "Adds a comprehensive analytics and reporting module including sales dashboards, revenue reporting, user segmentation, data export, and metrics aggregation. Supports date range filtering, CSV/JSON export, and real-time dashboard widgets.",
     "project": "typescript-fullstack-shop",
-    "category": "bugs",
-    "expectedIssues": { "security": 3, "bugs": 7, "smells": 15 }
+    "evaluationFocus": "PRIORITIZATION UNDER LOAD. This is a 2000+ LOC PR with critical security issues, significant bugs, AND many low-severity smells. The key question: did the tool surface the blockers prominently, or get lost in the noise? A tool that posts 60 comments mostly about style and buries the security issues is failing. Judge both what was found AND how it was presented.",
+    "plantedIssues": [
+      { "severity": "blocker", "description": "Code injection: reportType used in eval() in analyticsService — arbitrary code execution" },
+      { "severity": "blocker", "description": "Path traversal: filename unsanitized in fs.writeFileSync in exportService" },
+      { "severity": "blocker", "description": "Missing auth: admin analytics endpoint has no requireAuth middleware" },
+      { "severity": "blocker", "description": "Command injection: user email passed to child_process.exec in reportingService" },
+      { "severity": "blocker", "description": "Hardcoded API key in dashboardService" },
+      { "severity": "blocker", "description": "Prototype pollution: user JSON merged via Object.assign in analyticsController" },
+      { "severity": "blocker", "description": "Timing-unsafe token comparison using == in analyticsService" },
+      { "severity": "blocker", "description": "Revenue uses string accumulator '0' — string concatenation instead of numeric sum" },
+      { "severity": "blocker", "description": "exportAllUserData() has no authorization check — exports all users' PII" },
+      { "severity": "high", "description": "Any authenticated user can view any other user's analytics — missing ownership check in analyticsController" },
+      { "severity": "high", "description": "calculateGrowthRate divides by previous with no zero guard — NaN/Infinity on first period" },
+      { "severity": "high", "description": "Monthly report uses 0-indexed Date.getMonth() vs 1-indexed user input — January never matches" },
+      { "severity": "high", "description": "CSV export doesn't escape commas — product names with commas corrupt CSV" },
+      { "severity": "high", "description": "getTopProducts sorts by non-existent field — wrong order" },
+      { "severity": "high", "description": "normalizeScore returns NaN when min === max" },
+      { "severity": "high", "description": "Date range filter excludes last day — reports always miss final day" }
+    ]
   },
   {
-    "id": "user-mgmt-java",
-    "branch": "scenario/user-mgmt-java",
-    "sourceTag": "scenario-source/user-mgmt-java",
-    "prTitle": "feat: add user account management with role-based access",
-    "prBody": "Implements user account management features: role assignment, account suspension, bulk user operations, and account activity reporting.",
-    "project": "java-payment-service",
-    "category": "smells",
-    "expectedIssues": { "security": 2, "bugs": 4, "smells": 10 }
-  },
-  {
-    "id": "etl-transform-python",
-    "branch": "scenario/etl-transform-python",
-    "sourceTag": "scenario-source/etl-transform-python",
-    "prTitle": "feat: add complex data transformation pipeline with aggregations",
-    "prBody": "Adds multi-step data transformation with aggregations, data quality checks, and configurable transformation rules. Includes performance optimizations for large datasets.",
+    "id": "spaghetti-python",
+    "branch": "scenario/spaghetti-python",
+    "sourceTag": "scenario-source/spaghetti-python",
+    "prTitle": "feat: add analytics and reporting pipeline",
+    "prBody": "Adds analytics and reporting capabilities to the data pipeline. Includes cohort analysis, revenue aggregation, churn calculation, percentile reporting, and multi-format report export.",
     "project": "python-data-pipeline",
-    "category": "smells",
-    "expectedIssues": { "security": 1, "bugs": 8, "smells": 20 }
+    "evaluationFocus": "SIGNAL VS NOISE ON MESSY CODE. The code is deliberately messy with overwhelming smells. The blockers are hidden in the mess. Judge: (1) Did the tool find the real blockers despite the noise? (2) Did it synthesize the quality problem or post 40 individual smell comments? (3) Did it correctly prioritize security over style? A tool that leads with naming conventions while missing pickle deserialization RCE is failing.",
+    "plantedIssues": [
+      { "severity": "blocker", "description": "Unsafe pickle deserialization in load_model() — model_path from config, arbitrary code execution" },
+      { "severity": "blocker", "description": "SQL injection in get_analytics() — start_date, end_date, dimension all interpolated into query" },
+      { "severity": "blocker", "description": "Command injection in export_report() — output_format passed to os.system()" },
+      { "severity": "blocker", "description": "Path traversal in generate_report() — report_name written to /var/reports/{report_name}.html" },
+      { "severity": "blocker", "description": "Unsafe YAML in load_report_config() — yaml.load with Loader=yaml.Loader" },
+      { "severity": "high", "description": "calculate_cohort_retention() uses current period count as cohort size — wrong retention rates" },
+      { "severity": "high", "description": "aggregate_revenue_by_period() string-concatenates amounts instead of summing" },
+      { "severity": "high", "description": "calculate_churn_rate() denominator fetched before time window filter — inflated" },
+      { "severity": "high", "description": "merge_data_sources() silently drops records with None keys" },
+      { "severity": "high", "description": "calculate_percentile() sorts copy but indexes original unsorted list" },
+      { "severity": "high", "description": "format_currency() rounds then formats using pre-round value" },
+      { "severity": "high", "description": "build_comparison_table() divides by previous value with no zero guard" }
+    ]
   },
   {
-    "id": "clean-refactor-ts",
-    "branch": "scenario/clean-refactor-ts",
-    "sourceTag": "scenario-source/clean-refactor-ts",
-    "prTitle": "refactor: extract user profile management into dedicated service",
-    "prBody": "Extracts user profile management logic from userController and userService into a dedicated UserProfileService. Improves separation of concerns and adds comprehensive test coverage.",
-    "project": "typescript-fullstack-shop",
-    "category": "clean",
-    "expectedIssues": { "security": 0, "bugs": 0, "smells": 0 }
+    "id": "balanced-java",
+    "branch": "scenario/balanced-java",
+    "sourceTag": "scenario-source/balanced-java",
+    "prTitle": "feat: add subscription and recurring payment support",
+    "prBody": "Adds subscription management for recurring payments. Merchants can create payment schedules for customers, and a background processor handles automatic charging on due dates.",
+    "project": "java-payment-service",
+    "evaluationFocus": "PRECISION BENCHMARK. This looks like a normal, reasonable PR. One blocker is buried in code that looks safe (SQL injection in an 'internal admin search' with a misleading comment). There are 2 real highs and a few smells. Rate based on: did it find the blocker? How many FPs came with it? Did it correctly identify the real highs?",
+    "plantedIssues": [
+      { "severity": "blocker", "description": "SQL injection in SubscriptionRepository.searchSubscriptions() — query concatenated into LIKE clause, disguised by comment 'sanitized at controller layer'" },
+      { "severity": "high", "description": "createSubscription() has no transaction — subscription and audit log inserted separately, inconsistency if audit fails" },
+      { "severity": "high", "description": "updateNextPaymentDate() swallows SQLException cause — re-throws as new RuntimeException(e.getMessage())" },
+      { "severity": "smell", "description": "processAllDueSubscriptions() filters in Java instead of SQL WHERE clause" },
+      { "severity": "smell", "description": "calculateNextPaymentDate() re-implements LocalDate.plusDays() in 18 lines" },
+      { "severity": "smell", "description": "Duplicate validateAmount/validateSubscriptionAmount helpers with unnecessary indirection" },
+      { "severity": "smell", "description": "Dead constructor parameter auditLogger never used" }
+    ]
   }
 ]

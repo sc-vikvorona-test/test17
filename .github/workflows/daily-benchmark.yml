@@ -84,17 +84,15 @@ jobs:
           echo "//repox.jfrog.io/:_authToken=${{ fromJSON(steps.secrets.outputs.vault).ARTIFACTORY_TOKEN }}" >> ~/.npmrc
           npm ci
 
-      - name: Poll GitHub Checks API until all tools complete
+      - name: Poll for tool review comments
         id: wait
         working-directory: scripts
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPO: ${{ github.repository }}
           PR_MATRIX: ${{ needs.setup-prs.outputs.pr-matrix }}
-          # Check names for tools that post GitHub check runs
-          EXPECTED_CHECKS: ${{ vars.EXPECTED_CHECKS || 'Sonar Review,Claude Code Review,Cursor Bugbot' }}
           POLL_INTERVAL_SECONDS: '30'
-          TIMEOUT_SECONDS: '600'
+          TIMEOUT_SECONDS: '900'
         run: npx tsx wait-for-checks.ts
 
   evaluate:

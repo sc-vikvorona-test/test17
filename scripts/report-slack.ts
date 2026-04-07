@@ -7,340 +7,268 @@ function required(name: string): string {
   return value;
 }
 
-interface SeverityBreakdown {
-  blocker: number;
-  high: number;
-  medium: number;
-  low: number;
+interface ToolRating {
+  rating: string;
+  verdict: string;
+  plantedIssuesCaught: string[];
+  plantedIssuesMissed: string[];
+  notableComment: string | null;
+  noiseAssessment: string;
+  blockersCaught: number;
+  blockersTotal: number;
+  highsCaught: number;
+  highsTotal: number;
+  commentCount: number;
+  responseTimeSec: number | null;
 }
 
-interface ToolEvaluation {
-  configured: boolean;
-  issuesFound: number;
-  severityBreakdown: SeverityBreakdown;
-  falsePositives: number;
-  nitpickRating: number;
-  verbosityRating: number;
-  commentQuality: number;
-  notableFinding: string | null;
-}
-
-interface EvaluationResult {
+interface ScenarioEvaluation {
   scenarioId: string;
   prNumber: number;
-  expectedIssueCount: number;
-  perTool: Record<string, ToolEvaluation>;
+  evaluationFocus: string;
+  perTool: Record<string, ToolRating>;
 }
 
-interface PrEntry {
-  scenarioId: string;
-  prNumber: number;
-  prUrl: string;
+const SCENARIO_EMOJI: Record<string, string> = {
+  "clean-ts": "✅",
+  "cobol-payroll": "🗿",
+  "huge-ts": "🔥",
+  "spaghetti-python": "🌀",
+  "balanced-java": "☕",
+};
+
+const SCENARIO_SHORT: Record<string, string> = {
+  "clean-ts": "Clean TS",
+  "cobol-payroll": "COBOL",
+  "huge-ts": "Huge TS",
+  "spaghetti-python": "Python",
+  "balanced-java": "Java",
+};
+
+const SCENARIO_FOCUS: Record<string, string> = {
+  "clean-ts": "false positive test",
+  "cobol-payroll": "exotic language",
+  "huge-ts": "prioritization under load",
+  "spaghetti-python": "signal vs noise",
+  "balanced-java": "precision benchmark",
+};
+
+function ratingEmoji(rating: string): string {
+  const first = rating[0]?.toUpperCase();
+  if (first === "A") return "🟢";
+  if (first === "B") return "🔵";
+  if (first === "C") return "🟡";
+  if (first === "D") return "🟠";
+  return "🔴";
 }
 
-interface Scenario {
-  id: string;
-  prTitle: string;
-  category: string;
-  expectedIssues: { security: number; bugs: number; smells: number };
+const GRADE_SCORES: Record<string, number> = {
+  "A+": 4.3, A: 4, "A-": 3.7,
+  "B+": 3.3, B: 3, "B-": 2.7,
+  "C+": 2.3, C: 2, "C-": 1.7,
+  "D+": 1.3, D: 1, "D-": 0.7,
+  F: 0,
+};
+
+const GRADE_THRESHOLDS: Array<[number, string]> = [
+  [4.15, "A+"], [3.85, "A"], [3.5, "A-"],
+  [3.15, "B+"], [2.85, "B"], [2.5, "B-"],
+  [2.15, "C+"], [1.85, "C"], [1.5, "C-"],
+  [1.15, "D+"], [0.85, "D"], [0.5, "D-"],
+];
+
+function gradeToNumber(grade: string): number {
+  return GRADE_SCORES[grade] ?? 2;
 }
 
-interface ToolSummary {
-  name: string;
-  configured: boolean;
-  totalFound: number;
-  totalExpected: number;
-  detectionRate: number;
-  severityBreakdown: SeverityBreakdown;
-  totalFalsePositives: number;
-  falsePositivesOnClean: number;
-  avgFocusRating: number;
-  avgConcisenessRating: number;
-  avgCommentQuality: number;
+function numberToGrade(n: number): string {
+  for (const [threshold, grade] of GRADE_THRESHOLDS) {
+    if (n >= threshold) return grade;
+  }
+  return "F";
 }
 
-function computeToolSummaries(
-  results: EvaluationResult[],
+function computeOverallRatings(
+  results: ScenarioEvaluation[],
   toolNames: string[]
-): ToolSummary[] {
-  const issueResults = results.filter((r) => r.expectedIssueCount > 0);
-  const cleanResults = results.filter((r) => r.expectedIssueCount === 0);
+): Array<{ name: string; overall: string; score: number }> {
+  return toolNames
+    .map((name) => {
+      const scores = results
+        .map((r) => r.perTool[name]?.rating ?? "C")
+        .map(gradeToNumber);
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      return { name, score: avg, overall: numberToGrade(avg) };
+    })
+    .sort((a, b) => b.score - a.score);
+}
 
-  return toolNames.map((toolName) => {
-    const firstEntry = results[0]?.perTool[toolName];
-    const configured = firstEntry?.configured !== false;
+function formatSpeed(sec: number | null): string {
+  if (sec === null) return "—";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m${s}s` : `${s}s`;
+}
 
-    if (!configured) {
-      return {
-        name: toolName,
-        configured: false,
-        totalFound: 0,
-        totalExpected: 0,
-        detectionRate: 0,
-        severityBreakdown: { blocker: 0, high: 0, medium: 0, low: 0 },
-        totalFalsePositives: 0,
-        falsePositivesOnClean: 0,
-        avgFocusRating: 0,
-        avgConcisenessRating: 0,
-        avgCommentQuality: 0,
-      };
-    }
+function rawCell(text: string): object {
+  return { type: "raw_text", text };
+}
 
-    const totalFound = issueResults.reduce(
-      (sum, r) => sum + (r.perTool[toolName]?.issuesFound ?? 0),
-      0
-    );
-    const totalExpected = issueResults.reduce((sum, r) => sum + r.expectedIssueCount, 0);
+/** Build a Slack Table block */
+function tableBlock(rows: string[][]): object {
+  return {
+    type: "table",
+    rows: rows.map((row) => row.map((cell) => rawCell(cell))),
+  };
+}
 
-    const severityBreakdown: SeverityBreakdown = { blocker: 0, high: 0, medium: 0, low: 0 };
-    for (const r of issueResults) {
-      const sev = r.perTool[toolName]?.severityBreakdown;
-      if (sev) {
-        severityBreakdown.blocker += sev.blocker ?? 0;
-        severityBreakdown.high += sev.high;
-        severityBreakdown.medium += sev.medium;
-        severityBreakdown.low += sev.low;
-      }
-    }
-
-    const totalFalsePositives = results.reduce(
-      (sum, r) => sum + (r.perTool[toolName]?.falsePositives ?? 0),
-      0
-    );
-    const falsePositivesOnClean = cleanResults.reduce(
-      (sum, r) => sum + (r.perTool[toolName]?.falsePositives ?? 0),
-      0
-    );
-
-    const ratedResults = results.filter((r) => (r.perTool[toolName]?.commentQuality ?? 0) > 0);
-    const avg = (field: keyof ToolEvaluation) => {
-      const vals = ratedResults.map((r) => r.perTool[toolName]?.[field] as number).filter(Boolean);
-      return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-    };
-
+function buildSlackPayload(
+  results: ScenarioEvaluation[],
+  issueUrl: string
+): object {
+  if (results.length === 0) {
     return {
-      name: toolName,
-      configured: true,
-      totalFound,
-      totalExpected,
-      detectionRate: totalExpected > 0 ? (totalFound / totalExpected) * 100 : 0,
-      severityBreakdown,
-      totalFalsePositives,
-      falsePositivesOnClean,
-      avgFocusRating: avg("nitpickRating"),
-      avgConcisenessRating: avg("verbosityRating"),
-      avgCommentQuality: avg("commentQuality"),
+      text: "⚠️ Daily benchmark failed — no evaluation results produced.",
     };
-  });
-}
-
-function padR(s: string, len: number): string {
-  return s.length >= len ? s : s + " ".repeat(len - s.length);
-}
-
-function padL(s: string, len: number): string {
-  return s.length >= len ? s : " ".repeat(len - s.length) + s;
-}
-
-function stars(value: number, max: number = 5): string {
-  const filled = Math.min(Math.max(0, Math.round(value)), max);
-  return "●".repeat(filled) + "○".repeat(max - filled);
-}
-
-function medal(rank: number): string {
-  return ["🥇", "🥈", "🥉"][rank] ?? `${rank + 1}.`;
-}
-
-function formatDate(): string {
-  return new Date().toISOString().split("T")[0];
-}
-
-function fpIndicator(fp: number): string {
-  return fp === 0 ? "✅ 0" : `⚠️ ${fp}`;
-}
-
-function buildLeaderboardBlocks(
-  summaries: ToolSummary[],
-  resultCount: number,
-  runUrl: string
-): object[] {
-  const date = formatDate();
-  const configuredSummaries = summaries.filter((s) => s.configured);
-  const notConfiguredSummaries = summaries.filter((s) => !s.configured);
-
-  const ranked = [...configuredSummaries].sort(
-    (a, b) => b.detectionRate - a.detectionRate || a.totalFalsePositives - b.totalFalsePositives
-  );
-
-  const leaderboardLines = ranked.map((t, i) => {
-    const sev = `B:${t.severityBreakdown.blocker} H:${t.severityBreakdown.high} M:${t.severityBreakdown.medium} L:${t.severityBreakdown.low}`;
-    const fp = fpIndicator(t.totalFalsePositives);
-    const fpClean = t.falsePositivesOnClean > 0 ? ` (${t.falsePositivesOnClean} on clean)` : "";
-    return (
-      `${medal(i)} *${t.name}*  ` +
-      `${t.totalFound}/${t.totalExpected} detected (${t.detectionRate.toFixed(0)}%)  ` +
-      `FP: ${fp}${fpClean}  ` +
-      `[${sev}]\n` +
-      `    Quality: ${stars(t.avgCommentQuality)}  ` +
-      `Focus: ${stars(t.avgFocusRating)}  ` +
-      `Conciseness: ${stars(t.avgConcisenessRating)}`
-    );
-  });
-
-  if (notConfiguredSummaries.length > 0) {
-    leaderboardLines.push(
-      `⚠️ *${notConfiguredSummaries.map((s) => s.name).join(", ")}* — not configured`
-    );
   }
 
-  return [
-    {
-      type: "header",
-      text: { type: "plain_text", text: `Code Review Benchmark — ${date}` },
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Leaderboard* (${resultCount} scenarios)\n\n${leaderboardLines.join("\n\n")}`,
-      },
-    },
-    { type: "divider" },
-    {
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: `<${runUrl}|View Actions run> · Focus: 5=focused on real issues · Conciseness: 5=concise`,
-        },
-      ],
-    },
+  const toolNames = Object.keys(results[0].perTool);
+  const rankings = computeOverallRatings(results, toolNames);
+  const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"];
+  const date = new Date().toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+
+  const rankingText = rankings
+    .map((r, i) => {
+      const medal = medals[i] ?? `${i + 1}.`;
+      return `${medal} *${r.name}* — ${ratingEmoji(r.overall)} *${r.overall}*`;
+    })
+    .join("\n");
+
+  // Scorecard table: tools as rows, scenarios as columns + overall
+  const scenarioIds = results.map((r) => r.scenarioId);
+  const scorecardHeader = [
+    "Tool",
+    ...scenarioIds.map((id) => SCENARIO_SHORT[id] ?? id),
+    "Overall",
   ];
-}
-
-function buildScenarioGridBlocks(
-  results: EvaluationResult[],
-  summaries: ToolSummary[],
-  scenarios: Scenario[],
-  _prs: PrEntry[]
-): object[] {
-  const configuredSummaries = summaries.filter((s) => s.configured);
-  const ranked = [...configuredSummaries].sort(
-    (a, b) => b.detectionRate - a.detectionRate || a.totalFalsePositives - b.totalFalsePositives
-  );
-  const toolNames = ranked.map((t) => t.name);
-
-  function cellValue(result: EvaluationResult, toolName: string): string {
-    const e = result.perTool[toolName];
-    if (!e?.configured) return "—";
-    if (result.expectedIssueCount === 0) {
-      return e.falsePositives === 0 ? "✓ 0FP" : `! ${e.falsePositives}FP`;
-    }
-    const ratio = `${e.issuesFound}/${result.expectedIssueCount}`;
-    return e.falsePositives > 0 ? `${ratio} +${e.falsePositives}FP` : ratio;
-  }
-
-  // Calculate column widths dynamically
-  const idWidth = Math.max(8, ...results.map((r) => (r.scenarioId ?? "").length));
-  const expWidth = 3; // "Exp"
-
-  const toolWidths = toolNames.map((name) => {
-    const headerLen = name.length;
-    const dataLen = Math.max(...results.map((r) => cellValue(r, name).length));
-    return Math.max(headerLen, dataLen);
+  const scorecardRows: string[][] = rankings.map((r) => {
+    const scenarioCells = scenarioIds.map((id) => {
+      const result = results.find((res) => res.scenarioId === id);
+      const grade = result?.perTool[r.name]?.rating ?? "?";
+      return `${ratingEmoji(grade)} ${grade}`;
+    });
+    return [r.name, ...scenarioCells, `${ratingEmoji(r.overall)} ${r.overall}`];
   });
 
-  const headerParts = [padR("Scenario", idWidth), padR("Exp", expWidth)];
-  toolNames.forEach((name, i) => headerParts.push(padR(name, toolWidths[i])));
-  const header = headerParts.join("  ");
-  const separator = "─".repeat(header.length);
-
-  const rows: string[] = [header, separator];
-
+  // Per-scenario detail tables
+  const scenarioBlocks: object[] = [];
   for (const result of results) {
-    const label = padR(result.scenarioId ?? "", idWidth);
-    const exp = padR(String(result.expectedIssueCount), expWidth);
-    const toolCols = toolNames.map((name, i) => padR(cellValue(result, name), toolWidths[i]));
-    rows.push([label, exp, ...toolCols].join("  "));
-  }
+    const emoji = SCENARIO_EMOJI[result.scenarioId] ?? "📋";
+    const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
+    const focus = SCENARIO_FOCUS[result.scenarioId] ?? "";
 
-  const gridText = rows.join("\n");
-  const SLACK_LIMIT = 2900;
-  const prefix = "*Scenario Grid*  (found/expected  +FP=false positives)\n```\n";
-  const suffix = "\n```";
-  const body = gridText.length + prefix.length + suffix.length > SLACK_LIMIT
-    ? gridText.slice(0, SLACK_LIMIT - prefix.length - suffix.length - 3) + "..."
-    : gridText;
+    const detailHeader = ["Tool", "Grade", "Blockers", "Highs", "Comments", "Speed"];
+    const detailRows: string[][] = toolNames.map((name) => {
+      const t = result.perTool[name];
+      if (!t) return [name, "?", "—", "—", "—", "—"];
+      const blockers =
+        t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
+      const highs =
+        t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
+      return [
+        name,
+        `${ratingEmoji(t.rating)} ${t.rating}`,
+        blockers,
+        highs,
+        String(t.commentCount),
+        formatSpeed(t.responseTimeSec),
+      ];
+    });
 
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `${prefix}${body}${suffix}`,
+    scenarioBlocks.push(
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${emoji} *${label}* _— ${focus}_`,
+        },
       },
-    },
-  ];
-}
-
-async function postToSlack(
-  token: string,
-  channel: string,
-  blocks: object[]
-): Promise<void> {
-  const response = await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ channel, blocks, unfurl_links: false }),
-  });
-
-  const body = (await response.json()) as { ok: boolean; error?: string };
-  if (!body.ok) {
-    throw new Error(`Slack API error: ${body.error}`);
+      tableBlock([detailHeader, ...detailRows])
+    );
   }
-  console.log(`Posted to Slack channel ${channel}`);
+
+  return {
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: `🔬 Code Review Benchmark — ${date}`,
+        },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Overall Rankings*\n${rankingText}`,
+        },
+      },
+      { type: "divider" },
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: "*Scorecard*" },
+      },
+      tableBlock([scorecardHeader, ...scorecardRows]),
+      { type: "divider" },
+      ...scenarioBlocks,
+      { type: "divider" },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: issueUrl
+            ? `<${issueUrl}|View full report →>`
+            : "_Full report not available_",
+        },
+      },
+    ],
+  };
 }
 
 async function main(): Promise<void> {
-  const slackToken = required("SLACK_TOKEN");
-  const channel = process.env.SLACK_CHANNEL ?? "#code-review-benchmark-reports";
-  const runUrl = process.env.RUN_URL ?? "";
+  const webhookUrl = required("SLACK_WEBHOOK_URL");
+  const issueUrl = process.env.ISSUE_URL ?? "";
 
-  let results: EvaluationResult[];
+  let results: ScenarioEvaluation[];
   try {
-    if (process.env.EVALUATION_JSON) {
-      results = JSON.parse(process.env.EVALUATION_JSON);
-    } else {
-      results = JSON.parse(readFileSync("/tmp/evaluation.json", "utf-8"));
-    }
+    const raw =
+      process.env.EVALUATION_JSON ??
+      readFileSync("/tmp/evaluation.json", "utf-8");
+    results = JSON.parse(raw);
   } catch {
-    try {
-      results = JSON.parse(readFileSync("/tmp/evaluation.json", "utf-8"));
-    } catch {
-      results = [];
-      console.warn("No evaluation results found");
-    }
+    results = [];
+    console.warn("No evaluation results found");
   }
 
-  const scenariosPath = new URL("../scenarios.json", import.meta.url).pathname;
-  const scenarios: Scenario[] = JSON.parse(readFileSync(scenariosPath, "utf-8"));
+  const payload = buildSlackPayload(results, issueUrl);
 
-  const prs: PrEntry[] = process.env.PR_MATRIX ? JSON.parse(process.env.PR_MATRIX) : [];
+  const response = await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 
-  const toolNames = [...new Set(results.flatMap((r) => Object.keys(r.perTool)))];
-
-  if (toolNames.length === 0) {
-    console.warn("No tool data in results, skipping Slack post");
-    return;
+  if (!response.ok) {
+    throw new Error(
+      `Slack webhook failed: ${response.status} ${await response.text()}`
+    );
   }
 
-  const summaries = computeToolSummaries(results, toolNames);
-
-  await postToSlack(slackToken, channel, buildLeaderboardBlocks(summaries, results.length, runUrl));
-  await postToSlack(slackToken, channel, buildScenarioGridBlocks(results, summaries, scenarios, prs));
+  console.log("Slack notification sent successfully");
 }
 
 try {
