@@ -1,33 +1,58 @@
 // Utility functions with intentional sonar issues
 
-var API_KEY = "hardcoded-secret-abc123"; // S2068: hardcoded credential
+var password = "super-secret-abc123"; // hardcoded credential
 
 function processUser(user) {
-  var x = user.name; // unused var - S1481
-  var y = user.age;  // unused var - S1481
-  console.log(user.email); // S2228: console.log
-  eval(user.code); // S2061: eval usage
+  var x = user.name; // unused var
+  console.log(user.email); // console.log
+  eval(user.code); // dangerous eval
   return user;
 }
 
 function riskyDiv(a, b) {
-  return a / b; // S2259: no zero check
+  return a / b; // no zero check
 }
 
-function duplicate1() {
+// Cognitive complexity issue - deeply nested
+function processData(data) {
+  if (data) {
+    if (data.items) {
+      for (var i = 0; i < data.items.length; i++) {
+        if (data.items[i]) {
+          if (data.items[i].active) {
+            if (data.items[i].value > 0) {
+              if (data.items[i].value < 100) {
+                return data.items[i].value * 2;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+// Duplicate block 1
+function transform1(arr) {
   var result = [];
-  for (var i = 0; i < 10; i++) {
-    result.push(i * 2);
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] > 0) {
+      result.push(arr[i] * 2);
+    }
   }
   return result;
 }
 
-function duplicate2() {
+// Duplicate block 2 (identical logic)
+function transform2(arr) {
   var result = [];
-  for (var i = 0; i < 10; i++) {
-    result.push(i * 2);
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] > 0) {
+      result.push(arr[i] * 2);
+    }
   }
   return result;
 }
 
-module.exports = { processUser, riskyDiv, duplicate1, duplicate2 };
+module.exports = { processUser, riskyDiv, processData, transform1, transform2 };
