@@ -15,6 +15,21 @@ interface ToolRating {
   plantedIssuesMissed: string[];
   notableComment: string | null;
   noiseAssessment: string;
+  blockersCaught: number;
+  blockersTotal: number;
+  highsCaught: number;
+  highsTotal: number;
+  extraCount: number;
+  mediumCount: number;
+  fpCount: number;
+  noiseCount: number;
+  snr: number | null;
+  explainedCount: number;
+  fixSuggestedCount: number;
+  caughtByCategory: Record<string, number>;
+  totalByCategory: Record<string, number>;
+  commentCount: number;
+  responseTimeSec: number | null;
 }
 
 interface ScenarioEvaluation {
@@ -38,7 +53,7 @@ interface Scenario {
 
 const SCENARIO_LABELS: Record<string, string> = {
   "clean-ts": "✅ Clean PR",
-  "cobol-payroll": "🗿 COBOL",
+  "rust-metrics": "🦀 Rust Metrics",
   "huge-ts": "🔥 Huge TypeScript",
   "spaghetti-python": "🌀 Python Spaghetti",
   "balanced-java": "☕ Balanced Java",
@@ -46,7 +61,7 @@ const SCENARIO_LABELS: Record<string, string> = {
 
 const SCENARIO_FOCUS: Record<string, string> = {
   "clean-ts": "false positive test",
-  "cobol-payroll": "exotic language",
+  "rust-metrics": "Rust expertise",
   "huge-ts": "prioritization under load",
   "spaghetti-python": "signal vs noise",
   "balanced-java": "precision benchmark",
@@ -112,6 +127,31 @@ function buildIssueBody(
     .map((r, i) => `${i + 1}. **${r.name}** — ${r.overall}`)
     .join("\n");
 
+  // Aggregate category recall across all scenarios
+  const allCategories = Array.from(new Set(
+    results.flatMap((r) =>
+      toolNames.flatMap((n) => Object.keys(r.perTool[n]?.totalByCategory ?? {}))
+    )
+  )).sort();
+
+  const categoryTable = allCategories.length > 0 ? (() => {
+    const header = `| Category | Total | ${toolNames.join(" | ")} |`;
+    const sep = `|----------|-------|${toolNames.map(() => "------").join("|")}|`;
+    const rows = allCategories.map((cat) => {
+      const total = results.reduce((sum, r) => {
+        const t = r.perTool[toolNames[0]];
+        return sum + (t?.totalByCategory[cat] ?? 0);
+      }, 0);
+      const toolCols = toolNames.map((name) => {
+        const caught = results.reduce((sum, r) => sum + (r.perTool[name]?.caughtByCategory[cat] ?? 0), 0);
+        const pct = total > 0 ? Math.round((caught / total) * 100) : 0;
+        return `${caught}/${total} (${pct}%)`;
+      });
+      return `| **${cat}** | ${total} | ${toolCols.join(" | ")} |`;
+    });
+    return `## Category Recall\n\n${header}\n${sep}\n${rows.join("\n")}`;
+  })() : "";
+
   const scenarioSections = results
     .map((result) => {
       const scenario = scenarios.find((s) => s.id === result.scenarioId);
@@ -124,12 +164,18 @@ function buildIssueBody(
       const toolRows = toolNames
         .map((name) => {
           const t = result.perTool[name];
-          if (!t) return `| ${name} | ? | — | — |`;
-          const caught = t.plantedIssuesCaught.length;
-          const missed = t.plantedIssuesMissed.length;
-          const total = caught + missed;
-          const catchRate = total > 0 ? `${caught}/${total}` : "n/a";
-          return `| ${name} | **${t.rating}** | ${catchRate} | ${t.noiseAssessment} |`;
+          if (!t) return `| ${name} | ? | — | — | — | — | — | — | — |`;
+          const blockers = t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
+          const highs = t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
+          const extra = t.extraCount > 0 ? `+${t.extraCount}` : "—";
+          const fp = t.fpCount > 0 ? String(t.fpCount) : "—";
+          const noise = t.noiseCount > 0 ? String(t.noiseCount) : "—";
+          const snr = t.snr !== null ? String(t.snr) : "—";
+          const caught = t.plantedIssuesCaught?.length ?? 0;
+          const depth = caught > 0
+            ? `${t.explainedCount ?? 0}/${caught}${(t.fixSuggestedCount ?? 0) > 0 ? ` (✓${t.fixSuggestedCount})` : ""}`
+            : "—";
+          return `| ${name} | **${t.rating}** | ${blockers} | ${highs} | ${extra} | ${fp} | ${noise} | ${snr} | ${depth} |`;
         })
         .join("\n");
 
@@ -148,8 +194,8 @@ function buildIssueBody(
       return `### ${label}${prLink}
 *${title}* — ${focus}
 
-| Tool | Rating | Issues caught | Signal/noise |
-|------|--------|---------------|--------------|
+| Tool | Rating | Blockers | Highs | Extra | FP | Noise | SNR | Depth |
+|------|--------|----------|-------|-------|----|-------|-----|-------|
 ${toolRows}
 
 ${verdicts}`;
@@ -161,6 +207,10 @@ ${verdicts}`;
 ## Overall Rankings
 
 ${rankingLines}
+
+---
+
+${categoryTable}
 
 ---
 

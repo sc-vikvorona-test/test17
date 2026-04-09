@@ -22,6 +22,11 @@ interface ToolRating {
   mediumCount: number;
   fpCount: number;
   noiseCount: number;
+  snr: number | null;
+  explainedCount: number;
+  fixSuggestedCount: number;
+  caughtByCategory: Record<string, number>;
+  totalByCategory: Record<string, number>;
   commentCount: number;
   responseTimeSec: number | null;
 }
@@ -35,7 +40,7 @@ interface ScenarioEvaluation {
 
 const SCENARIO_EMOJI: Record<string, string> = {
   "clean-ts": "✅",
-  "cobol-payroll": "🗿",
+  "rust-metrics": "🦀",
   "huge-ts": "🔥",
   "spaghetti-python": "🌀",
   "balanced-java": "☕",
@@ -43,7 +48,7 @@ const SCENARIO_EMOJI: Record<string, string> = {
 
 const SCENARIO_SHORT: Record<string, string> = {
   "clean-ts": "Clean TS",
-  "cobol-payroll": "COBOL",
+  "rust-metrics": "Rust",
   "huge-ts": "Huge TS",
   "spaghetti-python": "Python",
   "balanced-java": "Java",
@@ -51,7 +56,7 @@ const SCENARIO_SHORT: Record<string, string> = {
 
 const SCENARIO_FOCUS: Record<string, string> = {
   "clean-ts": "false positive test",
-  "cobol-payroll": "exotic language",
+  "rust-metrics": "Rust expertise",
   "huge-ts": "prioritization under load",
   "spaghetti-python": "signal vs noise",
   "balanced-java": "precision benchmark",
@@ -107,18 +112,24 @@ function computeOverallRatings(
     .sort((a, b) => b.score - a.score);
 }
 
-function formatSpeed(sec: number | null): string {
-  if (sec === null) return "—";
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return m > 0 ? `${m}m${s}s` : `${s}s`;
+/** Recall % for a single tool in a single scenario (blockers + highs only). */
+function recallPct(t: ToolRating): string {
+  const total = t.blockersTotal + t.highsTotal;
+  if (total === 0) return "—";
+  return `${Math.round((t.blockersCaught + t.highsCaught) / total * 100)}%`;
+}
+
+/** SNR display: ∞ when no noise/FP, — when no comments, otherwise numeric. */
+function formatSnr(t: ToolRating): string {
+  if (t.commentCount === 0) return "—";
+  if ((t.fpCount ?? 0) + (t.noiseCount ?? 0) === 0) return "∞";
+  return t.snr !== null ? String(t.snr) : "—";
 }
 
 function rawCell(text: string): object {
   return { type: "raw_text", text };
 }
 
-/** Build a Slack Table block */
 function tableBlock(rows: string[][]): object {
   return {
     type: "table",
@@ -131,76 +142,111 @@ function buildMainPayload(
   issueUrl: string
 ): object {
   if (results.length === 0) {
-    return {
-      text: "⚠️ Daily benchmark failed — no evaluation results produced.",
-    };
+    return { text: "⚠️ Daily benchmark failed — no evaluation results produced." };
   }
 
   const toolNames = Object.keys(results[0].perTool);
   const rankings = computeOverallRatings(results, toolNames);
-  const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"];
+  const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣"];
   const date = new Date().toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
+    weekday: "short", month: "short", day: "numeric",
   });
 
-  const rankingText = rankings
+  // Aggregate recall + noise across all scenarios per tool
+  type Agg = { caught: number; planted: number; noise: number; snrSum: number; snrCount: number };
+  const agg = new Map<string, Agg>(
+    toolNames.map((n) => [n, { caught: 0, planted: 0, noise: 0, snrSum: 0, snrCount: 0 }])
+  );
+  for (const r of results) {
+    for (const name of toolNames) {
+      const t = r.perTool[name];
+      if (!t) continue;
+      const a = agg.get(name)!;
+      a.caught += t.blockersCaught + t.highsCaught;
+      a.planted += t.blockersTotal + t.highsTotal;
+      a.noise += (t.fpCount ?? 0) + (t.noiseCount ?? 0);
+      if (t.snr !== null) { a.snrSum += t.snr; a.snrCount++; }
+    }
+  }
+
+  // Leaderboard: medal + name + grade + recall% + SNR
+  const rankingLines = rankings
     .map((r, i) => {
       const medal = medals[i] ?? `${i + 1}.`;
-      return `${medal} *${r.name}* — ${ratingEmoji(r.overall)} *${r.overall}*`;
+      const a = agg.get(r.name)!;
+      const recall = a.planted > 0 ? `${Math.round(a.caught / a.planted * 100)}% recall` : "—";
+      const snr = a.noise === 0 && a.snrCount > 0
+        ? "SNR ∞"
+        : a.snrCount > 0
+          ? `SNR ${(a.snrSum / a.snrCount).toFixed(1)}`
+          : "";
+      const parts = [recall, snr].filter(Boolean).join("  |  ");
+      return `${medal} *${r.name}* — ${ratingEmoji(r.overall)} *${r.overall}*  ${parts}`;
     })
     .join("\n");
 
+  // Scorecard table
   const scenarioIds = results.map((r) => r.scenarioId);
-  const scorecardHeader = [
-    "Tool",
-    ...scenarioIds.map((id) => SCENARIO_SHORT[id] ?? id),
-    "Overall",
-  ];
-  const scorecardRows: string[][] = rankings.map((r) => {
-    const scenarioCells = scenarioIds.map((id) => {
-      const result = results.find((res) => res.scenarioId === id);
-      const grade = result?.perTool[r.name]?.rating ?? "?";
+  const scorecardHeader = ["Tool", ...scenarioIds.map((id) => SCENARIO_SHORT[id] ?? id), "Overall"];
+  const scorecardRows = rankings.map((r) => {
+    const cells = scenarioIds.map((id) => {
+      const res = results.find((x) => x.scenarioId === id);
+      const grade = res?.perTool[r.name]?.rating ?? "?";
       return `${ratingEmoji(grade)} ${grade}`;
     });
-    return [r.name, ...scenarioCells, `${ratingEmoji(r.overall)} ${r.overall}`];
+    return [r.name, ...cells, `${ratingEmoji(r.overall)} ${r.overall}`];
   });
 
-  return {
-    blocks: [
-      {
-        type: "header",
-        text: {
-          type: "plain_text",
-          text: `🔬 Code Review Benchmark — ${date}`,
-        },
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*Overall Rankings*\n${rankingText}`,
-        },
-      },
-      { type: "divider" },
-      {
-        type: "section",
-        text: { type: "mrkdwn", text: "*Scorecard*" },
-      },
-      tableBlock([scorecardHeader, ...scorecardRows]),
-      { type: "divider" },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: issueUrl
-            ? `<${issueUrl}|View full report →>`
-            : "_Full report not available_",
-        },
-      },
-    ],
-  };
+  // Run-level insights (1-2 lines)
+  const insights: string[] = [];
+  const silentTools = toolNames.filter((n) =>
+    results.every((r) => (r.perTool[n]?.commentCount ?? 0) === 0)
+  );
+  if (silentTools.length > 0) {
+    insights.push(`🔇 ${silentTools.join(", ")} silent on all scenarios`);
+  }
+  const noisiest = [...agg.entries()]
+    .filter(([, a]) => a.noise > 0)
+    .sort((a, b) => b[1].noise - a[1].noise)[0];
+  if (noisiest && noisiest[1].noise >= 8) {
+    insights.push(`⚠️ ${noisiest[0]} — ${noisiest[1].noise} noise/FP comments across all scenarios`);
+  }
+
+  const blocks: object[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: `🔬 Code Review Benchmark — ${date}` },
+    },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*Rankings*\n${rankingLines}` },
+    },
+    { type: "divider" },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: "*Scorecard*" },
+    },
+    tableBlock([scorecardHeader, ...scorecardRows]),
+  ];
+
+  if (insights.length > 0) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: insights.join("\n") },
+    });
+  }
+
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: issueUrl ? `<${issueUrl}|View full report →>` : "_Full report not available_",
+    },
+  });
+
+  return { blocks };
 }
 
 function buildScenarioPayload(
@@ -211,51 +257,67 @@ function buildScenarioPayload(
   const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
   const focus = SCENARIO_FOCUS[result.scenarioId] ?? "";
 
-  const detailHeader = ["Tool", "Grade", "Blocker", "Important", "Extra", "Medium", "FP", "Noise", "Speed"];
-  const detailRows: string[][] = toolNames.map((name) => {
+  // 6-column table: Tool | Grade | Recall | Extra | SNR | Depth
+  const header = ["Tool", "Grade", "Recall", "Extra", "SNR", "Depth"];
+  const rows: string[][] = toolNames.map((name) => {
     const t = result.perTool[name];
-    if (!t) return [name, "?", "—", "—", "—", "—", "—", "—", "—"];
-    const blockers = t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
-    const highs = t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
-    return [
-      name,
-      `${ratingEmoji(t.rating)} ${t.rating}`,
-      blockers,
-      highs,
-      t.extraCount > 0 ? String(t.extraCount) : "—",
-      t.mediumCount > 0 ? String(t.mediumCount) : "—",
-      t.fpCount > 0 ? String(t.fpCount) : "—",
-      t.noiseCount > 0 ? String(t.noiseCount) : "—",
-      formatSpeed(t.responseTimeSec),
-    ];
+    if (!t) return [name, "?", "—", "—", "—", "—"];
+    const caught = (t.plantedIssuesCaught ?? []).length;
+    const depth = caught > 0
+      ? `${t.explainedCount ?? 0}/${caught}${(t.fixSuggestedCount ?? 0) > 0 ? ` ✓${t.fixSuggestedCount}` : ""}`
+      : "—";
+    const extra = (t.extraCount ?? 0) > 0 ? `+${t.extraCount}` : "—";
+    return [name, `${ratingEmoji(t.rating)} ${t.rating}`, recallPct(t), extra, formatSnr(t), depth];
   });
 
-  const verdictBlocks = toolNames
-    .flatMap((name) => {
-      const t = result.perTool[name];
-      if (!t?.verdict) return [];
-      return [{
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*${name}:* ${t.verdict}`.slice(0, 3000),
-        },
-      }];
-    });
+  // Best tool by recall among those that commented
+  const activeTools = toolNames.filter((n) => (result.perTool[n]?.commentCount ?? 0) > 0);
+  const bestTool = [...activeTools].sort((a, b) => {
+    const ta = result.perTool[a], tb = result.perTool[b];
+    const rA = (ta.blockersCaught + ta.highsCaught) / Math.max(ta.blockersTotal + ta.highsTotal, 1);
+    const rB = (tb.blockersCaught + tb.highsCaught) / Math.max(tb.blockersTotal + tb.highsTotal, 1);
+    return rB - rA;
+  })[0] ?? null;
 
-  return {
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `${emoji} *${label}* _— ${focus}_`,
-        },
-      },
-      tableBlock([detailHeader, ...detailRows]),
-      ...verdictBlocks,
-    ],
-  };
+  // Issues nobody caught (intersection of all active tools' missed lists)
+  const activeMissed = activeTools.map((n) => new Set(result.perTool[n]?.plantedIssuesMissed ?? []));
+  const nobodyCaught = activeMissed.length > 0
+    ? [...activeMissed[0]].filter((issue) => activeMissed.every((s) => s.has(issue)))
+    : [];
+
+  const blocks: object[] = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `${emoji} *${label}* _— ${focus}_` },
+    },
+    tableBlock([header, ...rows]),
+  ];
+
+  // Insight block
+  const insightLines: string[] = [];
+
+  if (bestTool) {
+    const pct = recallPct(result.perTool[bestTool]);
+    const notable = result.perTool[bestTool]?.notableComment;
+    const notableStr = notable ? `\n> _${notable.slice(0, 120).replace(/\n/g, " ")}_` : "";
+    insightLines.push(`⚡ *${bestTool}* led — ${pct} recall${notableStr}`);
+  }
+
+  if (nobodyCaught.length > 0) {
+    const bullets = nobodyCaught
+      .map((d) => `• ${d.length > 85 ? d.slice(0, 82) + "…" : d}`)
+      .join("\n");
+    insightLines.push(`🚫 *Nobody caught (${nobodyCaught.length}):*\n${bullets}`);
+  }
+
+  if (insightLines.length > 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: insightLines.join("\n\n") },
+    });
+  }
+
+  return { blocks };
 }
 
 async function postToSlack(

@@ -35,6 +35,12 @@
       "botLogin": "gitar-bot[bot]",
       "checkName": null,
       "configured": true
+    },
+    {
+      "name": "Greptile",
+      "botLogin": "greptile-apps[bot]",
+      "checkName": null,
+      "configured": true
     }
   ]
 }

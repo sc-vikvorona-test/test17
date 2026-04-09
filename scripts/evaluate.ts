@@ -20,6 +20,7 @@ function required(name: string): string {
 
 interface PlantedIssue {
   severity: "blocker" | "high" | "smell";
+  category?: string;
   description: string;
 }
 
@@ -75,6 +76,7 @@ interface ToolStats {
 export interface ToolRating {
   rating: string;
   verdict: string;
+  plantedCaughtIndices: number[];
   plantedIssuesCaught: string[];
   plantedIssuesMissed: string[];
   notableComment: string | null;
@@ -87,6 +89,11 @@ export interface ToolRating {
   mediumCount: number;
   fpCount: number;
   noiseCount: number;
+  snr: number | null;
+  explainedCount: number;
+  fixSuggestedCount: number;
+  caughtByCategory: Record<string, number>;
+  totalByCategory: Record<string, number>;
   commentCount: number;
   responseTimeSec: number | null;
 }
@@ -244,29 +251,12 @@ function buildPrompt(
   tools: Tool[],
   toolStats: Map<string, ToolStats>
 ): string {
-  const blockers = scenario.plantedIssues.filter((i) => i.severity === "blocker");
-  const highs = scenario.plantedIssues.filter((i) => i.severity === "high");
-  const smells = scenario.plantedIssues.filter((i) => i.severity === "smell");
-
   const plantedSection =
     scenario.plantedIssues.length === 0
       ? "None — this is a clean PR with no intentional issues."
-      : [
-          blockers.length > 0
-            ? `BLOCKERS (${blockers.length}):\n` +
-              blockers.map((i) => `  - ${i.description}`).join("\n")
-            : "",
-          highs.length > 0
-            ? `HIGHS (${highs.length}):\n` +
-              highs.map((i) => `  - ${i.description}`).join("\n")
-            : "",
-          smells.length > 0
-            ? `SMELLS (${smells.length}):\n` +
-              smells.map((i) => `  - ${i.description}`).join("\n")
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
+      : scenario.plantedIssues
+          .map((i, idx) => `  [${idx}] ${i.severity.toUpperCase()} (${i.category ?? "general"}): ${i.description}`)
+          .join("\n");
 
   const commentsByTool = new Map<string, ToolComment[]>();
   for (const tool of tools) {
@@ -317,7 +307,7 @@ function buildPrompt(
 </scenario>
 
 <planted-issues>
-These are the intentional issues introduced into this PR. They serve as ground truth for recall measurement.
+These are the intentional issues introduced into this PR, numbered by index. They serve as ground truth for recall measurement.
 ${plantedSection}
 </planted-issues>
 
@@ -341,6 +331,7 @@ Before looking at any tool's comments, study the diff yourself. Form your own vi
 
 **Step 2 — Evaluate each tool's comments against both the planted list and your own analysis.**
 - A tool catches a planted issue if it correctly identifies the underlying problem — exact wording doesn't matter but the specific bug must be recognized. Be strict: vague comments that mention a file or area without identifying the actual bug don't count.
+- Record caught planted issues as their 0-based index from the planted-issues list above.
 - If a tool flags something NOT in the planted list: verify it against the diff yourself. If it is a real problem in the code, note it in the verdict as a bonus finding — do NOT count it as a false positive. Only count as FP if you have verified the code is actually correct at the flagged location.
 - A "noise" comment is technically valid but low-value: style nitpicks, trivial naming suggestions, or observations obvious from context.
 
@@ -358,8 +349,7 @@ Respond with only a JSON object using this structure (tool names must match exac
     "<tool name>": {
       "rating": "<letter grade, e.g. A, B+, C-, F>",
       "verdict": "<2-3 sentences: your honest assessment, including depth of analysis and any bonus findings>",
-      "plantedIssuesCaught": ["<brief description of each planted issue this tool caught>"],
-      "plantedIssuesMissed": ["<brief description of each planted issue this tool missed>"],
+      "plantedCaughtIndices": [<0-based indices from the planted-issues list that this tool caught, e.g. [0, 2, 5]>],
       "notableComment": "<the single most useful or interesting comment this tool made, or null>",
       "noiseAssessment": "<brief: did the tool focus on what matters or scatter? mention comment volume if high>",
       "blockersCaught": <integer: how many planted BLOCKER issues this tool caught>,
@@ -367,7 +357,9 @@ Respond with only a JSON object using this structure (tool names must match exac
       "extraCount": <integer: real unplanted findings at blocker or important severity — e.g. a security vulnerability, data loss risk, or serious bug the tool found that was not on the planted list>,
       "mediumCount": <integer: real unplanted findings that are valid but not critical — e.g. an off-by-one, missing edge case, or logic error that the tool correctly identified but that was not planted and is not severe enough to be Extra>,
       "fpCount": <integer: comments flagging code that you verified is actually correct — only after checking the diff>,
-      "noiseCount": <integer: valid but a human author would just wave off — style nitpicks, trivial naming suggestions, observations obvious from context>
+      "noiseCount": <integer: valid but a human author would just wave off — style nitpicks, trivial naming suggestions, observations obvious from context>,
+      "explainedCount": <integer: of the caught planted issues, how many did the tool explain well — meaning the comment identifies (1) the specific vulnerable/buggy code, (2) WHY it is a bug (the mechanism, not just a label), AND (3) the consequence/impact OR a concrete fix. A comment that only names the issue type ("SQL injection here") without mechanism/impact does NOT count>,
+      "fixSuggestedCount": <integer: of the caught planted issues, how many included a concrete code fix — actual changed code or a specific parameterized example, not generic advice like "use parameterized queries". Must be ≤ explainedCount>
     }
   }
 }`;
@@ -387,8 +379,7 @@ async function evaluateScenario(
     properties: {
       rating: { type: "string" },
       verdict: { type: "string" },
-      plantedIssuesCaught: { type: "array", items: { type: "string" } },
-      plantedIssuesMissed: { type: "array", items: { type: "string" } },
+      plantedCaughtIndices: { type: "array", items: { type: "integer" } },
       notableComment: { type: ["string", "null"] },
       noiseAssessment: { type: "string" },
       blockersCaught: { type: "integer" },
@@ -397,10 +388,13 @@ async function evaluateScenario(
       mediumCount: { type: "integer" },
       fpCount: { type: "integer" },
       noiseCount: { type: "integer" },
+      explainedCount: { type: "integer" },
+      fixSuggestedCount: { type: "integer" },
     },
-    required: ["rating", "verdict", "plantedIssuesCaught", "plantedIssuesMissed",
+    required: ["rating", "verdict", "plantedCaughtIndices",
       "notableComment", "noiseAssessment", "blockersCaught", "highsCaught",
-      "extraCount", "mediumCount", "fpCount", "noiseCount"],
+      "extraCount", "mediumCount", "fpCount", "noiseCount",
+      "explainedCount", "fixSuggestedCount"],
   };
 
   const perToolProperties: Record<string, unknown> = {};
@@ -447,6 +441,14 @@ async function evaluateScenario(
     const parsed = JSON.parse(jsonText);
     parsed.prNumber = prEntry.prNumber;
 
+    // Compute totalByCategory from the scenario's planted issues (same for all tools)
+    const totalByCategory: Record<string, number> = {};
+    for (const issue of scenario.plantedIssues) {
+      if (issue.severity === "smell") continue;
+      const cat = issue.category ?? "general";
+      totalByCategory[cat] = (totalByCategory[cat] ?? 0) + 1;
+    }
+
     // Merge in computed stats that Claude doesn't need to calculate
     for (const tool of tools) {
       const rating = parsed.perTool[tool.name];
@@ -462,6 +464,44 @@ async function evaluateScenario(
         rating.mediumCount = rating.mediumCount ?? 0;
         rating.fpCount = rating.fpCount ?? 0;
         rating.noiseCount = rating.noiseCount ?? 0;
+        rating.explainedCount = rating.explainedCount ?? 0;
+        rating.fixSuggestedCount = rating.fixSuggestedCount ?? 0;
+
+        // Reconstruct caught/missed descriptions from indices
+        const caughtIndices: number[] = (rating.plantedCaughtIndices ?? [])
+          .filter((i: number) => i >= 0 && i < scenario.plantedIssues.length);
+        const caughtSet = new Set(caughtIndices);
+        rating.plantedCaughtIndices = caughtIndices;
+        rating.plantedIssuesCaught = caughtIndices.map((i) => scenario.plantedIssues[i].description);
+        rating.plantedIssuesMissed = scenario.plantedIssues
+          .map((issue, i) => ({ issue, i }))
+          .filter(({ issue, i }) => issue.severity !== "smell" && !caughtSet.has(i))
+          .map(({ issue }) => issue.description);
+
+        // Category-level recall
+        const caughtByCategory: Record<string, number> = {};
+        for (const i of caughtIndices) {
+          const issue = scenario.plantedIssues[i];
+          if (issue.severity === "smell") continue;
+          const cat = issue.category ?? "general";
+          caughtByCategory[cat] = (caughtByCategory[cat] ?? 0) + 1;
+        }
+        rating.caughtByCategory = caughtByCategory;
+        rating.totalByCategory = totalByCategory;
+
+        // Clamp depth counts to actual caught count
+        const caughtCount = caughtIndices.length;
+        rating.explainedCount = Math.min(rating.explainedCount, caughtCount);
+        rating.fixSuggestedCount = Math.min(rating.fixSuggestedCount, rating.explainedCount);
+
+        // SNR = useful signals / noise (higher is better; null when tool didn't comment)
+        if (stats.commentCount === 0) {
+          rating.snr = null;
+        } else {
+          const useful = rating.blockersCaught + rating.highsCaught + rating.extraCount + rating.mediumCount;
+          const noise = rating.fpCount + rating.noiseCount;
+          rating.snr = parseFloat((useful / Math.max(noise, 1)).toFixed(2));
+        }
       }
     }
     result = parsed;
@@ -482,8 +522,11 @@ async function evaluateScenario(
             {
               rating: "?",
               verdict: "Evaluation failed: could not parse Claude response",
+              plantedCaughtIndices: [],
               plantedIssuesCaught: [],
-              plantedIssuesMissed: scenario.plantedIssues.map((i) => i.description),
+              plantedIssuesMissed: scenario.plantedIssues
+                .filter((i) => i.severity !== "smell")
+                .map((i) => i.description),
               notableComment: null,
               noiseAssessment: "unknown",
               blockersCaught: 0,
@@ -494,6 +537,11 @@ async function evaluateScenario(
               mediumCount: 0,
               fpCount: 0,
               noiseCount: 0,
+              snr: null,
+              explainedCount: 0,
+              fixSuggestedCount: 0,
+              caughtByCategory: {},
+              totalByCategory: {},
               commentCount: stats.commentCount,
               responseTimeSec: stats.responseTimeSec,
             },
