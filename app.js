@@ -17,4 +17,11 @@ function divide(a, b) {
   return a / b;
 }
 
-module.exports = { add, subtract, multiply, divide };
+function power(base, exponent) {
+  if (typeof exponent !== 'number') {
+    throw new TypeError('Exponent must be a number');
+  }
+  return Math.pow(base, exponent);
+}
+
+module.exports = { add, subtract, multiply, divide, power };
