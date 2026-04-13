@@ -23,6 +23,7 @@ interface ToolRating {
   fpCount: number;
   noiseCount: number;
   snr: number | null;
+  usefulnessScore: number | null;
   explainedCount: number;
   fixSuggestedCount: number;
   caughtByCategory: Record<string, number>;
@@ -39,7 +40,6 @@ interface ScenarioEvaluation {
 }
 
 const SCENARIO_EMOJI: Record<string, string> = {
-  "clean-ts": "✅",
   "rust-metrics": "🦀",
   "huge-ts": "🔥",
   "spaghetti-python": "🌀",
@@ -47,7 +47,6 @@ const SCENARIO_EMOJI: Record<string, string> = {
 };
 
 const SCENARIO_SHORT: Record<string, string> = {
-  "clean-ts": "Clean TS",
   "rust-metrics": "Rust",
   "huge-ts": "Huge TS",
   "spaghetti-python": "Python",
@@ -55,7 +54,6 @@ const SCENARIO_SHORT: Record<string, string> = {
 };
 
 const SCENARIO_FOCUS: Record<string, string> = {
-  "clean-ts": "false positive test",
   "rust-metrics": "Rust expertise",
   "huge-ts": "prioritization under load",
   "spaghetti-python": "signal vs noise",
@@ -119,11 +117,17 @@ function recallPct(t: ToolRating): string {
   return `${Math.round((t.blockersCaught + t.highsCaught) / total * 100)}%`;
 }
 
-/** SNR display: ∞ when no noise/FP, — when no comments, otherwise numeric. */
-function formatSnr(t: ToolRating): string {
+/** Noise display: total FP + noise comments, — when tool didn't comment. */
+function formatNoise(t: ToolRating): string {
   if (t.commentCount === 0) return "—";
-  if ((t.fpCount ?? 0) + (t.noiseCount ?? 0) === 0) return "∞";
-  return t.snr !== null ? String(t.snr) : "—";
+  const n = (t.fpCount ?? 0) + (t.noiseCount ?? 0);
+  return n === 0 ? "0" : String(n);
+}
+
+/** Usefulness display: score/10 or — when tool didn't comment. */
+function formatUsefulness(t: ToolRating): string {
+  if (t.usefulnessScore === null || t.usefulnessScore === undefined) return "—";
+  return `${t.usefulnessScore}/10`;
 }
 
 function rawCell(text: string): object {
@@ -153,9 +157,9 @@ function buildMainPayload(
   });
 
   // Aggregate recall + noise across all scenarios per tool
-  type Agg = { caught: number; planted: number; noise: number; snrSum: number; snrCount: number };
+  type Agg = { caught: number; planted: number; noise: number; usefulSum: number; usefulCount: number };
   const agg = new Map<string, Agg>(
-    toolNames.map((n) => [n, { caught: 0, planted: 0, noise: 0, snrSum: 0, snrCount: 0 }])
+    toolNames.map((n) => [n, { caught: 0, planted: 0, noise: 0, usefulSum: 0, usefulCount: 0 }])
   );
   for (const r of results) {
     for (const name of toolNames) {
@@ -165,22 +169,22 @@ function buildMainPayload(
       a.caught += t.blockersCaught + t.highsCaught;
       a.planted += t.blockersTotal + t.highsTotal;
       a.noise += (t.fpCount ?? 0) + (t.noiseCount ?? 0);
-      if (t.snr !== null) { a.snrSum += t.snr; a.snrCount++; }
+      if (t.usefulnessScore !== null && t.usefulnessScore !== undefined) {
+        a.usefulSum += t.usefulnessScore;
+        a.usefulCount++;
+      }
     }
   }
 
-  // Leaderboard: medal + name + grade + recall% + SNR
+  // Leaderboard: medal + name + grade + recall% + noise + usefulness
   const rankingLines = rankings
     .map((r, i) => {
       const medal = medals[i] ?? `${i + 1}.`;
       const a = agg.get(r.name)!;
       const recall = a.planted > 0 ? `${Math.round(a.caught / a.planted * 100)}% recall` : "—";
-      const snr = a.noise === 0 && a.snrCount > 0
-        ? "SNR ∞"
-        : a.snrCount > 0
-          ? `SNR ${(a.snrSum / a.snrCount).toFixed(1)}`
-          : "";
-      const parts = [recall, snr].filter(Boolean).join("  |  ");
+      const noise = `${a.noise} noise`;
+      const useful = a.usefulCount > 0 ? `${(a.usefulSum / a.usefulCount).toFixed(1)}/10 useful` : "";
+      const parts = [recall, noise, useful].filter(Boolean).join("  |  ");
       return `${medal} *${r.name}* — ${ratingEmoji(r.overall)} *${r.overall}*  ${parts}`;
     })
     .join("\n");
@@ -209,7 +213,7 @@ function buildMainPayload(
     .filter(([, a]) => a.noise > 0)
     .sort((a, b) => b[1].noise - a[1].noise)[0];
   if (noisiest && noisiest[1].noise >= 8) {
-    insights.push(`⚠️ ${noisiest[0]} — ${noisiest[1].noise} noise/FP comments across all scenarios`);
+    insights.push(`⚠️ ${noisiest[0]} — ${noisiest[1].noise} noise/FP comments`);
   }
 
   const blocks: object[] = [
@@ -257,17 +261,17 @@ function buildScenarioPayload(
   const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
   const focus = SCENARIO_FOCUS[result.scenarioId] ?? "";
 
-  // 6-column table: Tool | Grade | Recall | Extra | SNR | Depth
-  const header = ["Tool", "Grade", "Recall", "Extra", "SNR", "Depth"];
+  // 7-column table: Tool | Grade | Recall | Extra | Noise | Depth | Useful
+  const header = ["Tool", "Grade", "Recall", "Extra", "Noise", "Depth", "Useful"];
   const rows: string[][] = toolNames.map((name) => {
     const t = result.perTool[name];
-    if (!t) return [name, "?", "—", "—", "—", "—"];
+    if (!t) return [name, "?", "—", "—", "—", "—", "—"];
     const caught = (t.plantedIssuesCaught ?? []).length;
     const depth = caught > 0
       ? `${t.explainedCount ?? 0}/${caught}${(t.fixSuggestedCount ?? 0) > 0 ? ` ✓${t.fixSuggestedCount}` : ""}`
       : "—";
     const extra = (t.extraCount ?? 0) > 0 ? `+${t.extraCount}` : "—";
-    return [name, `${ratingEmoji(t.rating)} ${t.rating}`, recallPct(t), extra, formatSnr(t), depth];
+    return [name, `${ratingEmoji(t.rating)} ${t.rating}`, recallPct(t), extra, formatNoise(t), depth, formatUsefulness(t)];
   });
 
   // Best tool by recall among those that commented
@@ -299,13 +303,13 @@ function buildScenarioPayload(
   if (bestTool) {
     const pct = recallPct(result.perTool[bestTool]);
     const notable = result.perTool[bestTool]?.notableComment;
-    const notableStr = notable ? `\n> _${notable.slice(0, 120).replace(/\n/g, " ")}_` : "";
+    const notableStr = notable ? `\n> _${notable.slice(0, 1200).replace(/\n/g, " ")}${notable.length > 1200 ? "…" : ""}_` : "";
     insightLines.push(`⚡ *${bestTool}* led — ${pct} recall${notableStr}`);
   }
 
   if (nobodyCaught.length > 0) {
     const bullets = nobodyCaught
-      .map((d) => `• ${d.length > 85 ? d.slice(0, 82) + "…" : d}`)
+      .map((d) => `• ${d.length > 500 ? d.slice(0, 497) + "…" : d}`)
       .join("\n");
     insightLines.push(`🚫 *Nobody caught (${nobodyCaught.length}):*\n${bullets}`);
   }

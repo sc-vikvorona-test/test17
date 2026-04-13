@@ -1,15 +1,5 @@
 [
   {
-    "id": "clean-ts",
-    "branch": "scenario/clean-ts",
-    "sourceTag": "scenario-source/clean-ts",
-    "prTitle": "feat: add discount and coupon system",
-    "prBody": "Adds a coupon/discount system allowing customers to apply promo codes at checkout. Supports percentage and flat discounts with expiry dates, usage limits, and minimum order amounts.",
-    "project": "typescript-fullstack-shop",
-    "evaluationFocus": "FALSE POSITIVE TEST. This is intentionally clean, well-written code with zero planted issues. The only job here is to judge whether each tool's comments are warranted. Any flag on this PR is a false positive. Rate tools by how quiet they are — silence is correct behavior.",
-    "plantedIssues": []
-  },
-  {
     "id": "rust-metrics",
     "branch": "scenario/rust-metrics",
     "sourceTag": "scenario-source/rust-metrics",
@@ -51,6 +41,11 @@
       {
         "severity": "high",
         "description": "to_prometheus() concatenates labels string (which includes braces) with a separate {quantile=...} block for histogram quantile lines — produces double-braces like metric{env=\"prod\"}{quantile=\"0.5\"} which is invalid Prometheus syntax and will be rejected by parsers",
+        "category": "data"
+      },
+      {
+        "severity": "high",
+        "description": "WindowAggregate derives Default giving min=0.0 and max=0.0 — aggregate() uses these as initial values so min is never updated for all-positive metrics and max never updated for all-negative metrics, silently returning wrong aggregation results",
         "category": "data"
       }
     ]
@@ -127,6 +122,10 @@
       {
         "severity": "high",
         "description": "mergeMetrics mutates first argument in-place — callers holding a reference to the original AggregatedMetrics object observe silent data corruption"
+      },
+      {
+        "severity": "high",
+        "description": "getPaymentSuccessRate and getPaymentReconciliationReport filter payments by status === 'completed' but the PaymentStatus enum has no 'completed' value — the correct value is 'captured', so successful payments are never counted and success rate always reports 0%"
       }
     ]
   },
@@ -186,6 +185,10 @@
       {
         "severity": "high",
         "description": "build_comparison_table() divides by previous value with no zero guard"
+      },
+      {
+        "severity": "high",
+        "description": "score_user() falls back to random.random() when model.predict() throws — silently returns a random float as a real ML score, causing nonsensical risk classifications for any user whose features the model can't handle"
       }
     ]
   },
@@ -225,6 +228,14 @@
       {
         "severity": "smell",
         "description": "Dead constructor parameter auditLogger never used"
+      },
+      {
+        "severity": "blocker",
+        "description": "initializeSchema() only creates the subscriptions table but createSubscription() inserts into audit_log — the audit_log table never exists, so every createSubscription call throws a SQLException at runtime"
+      },
+      {
+        "severity": "high",
+        "description": "processAllDueSubscriptions() wraps processPayment + updateNextPaymentDate in a single catch block — if processPayment succeeds but updateNextPaymentDate throws, the exception is swallowed and the subscription date is never advanced, causing the subscription to be charged again on the next run"
       }
     ]
   }

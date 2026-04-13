@@ -24,6 +24,7 @@ interface ToolRating {
   fpCount: number;
   noiseCount: number;
   snr: number | null;
+  usefulnessScore: number | null;
   explainedCount: number;
   fixSuggestedCount: number;
   caughtByCategory: Record<string, number>;
@@ -52,7 +53,6 @@ interface Scenario {
 }
 
 const SCENARIO_LABELS: Record<string, string> = {
-  "clean-ts": "✅ Clean PR",
   "rust-metrics": "🦀 Rust Metrics",
   "huge-ts": "🔥 Huge TypeScript",
   "spaghetti-python": "🌀 Python Spaghetti",
@@ -60,7 +60,6 @@ const SCENARIO_LABELS: Record<string, string> = {
 };
 
 const SCENARIO_FOCUS: Record<string, string> = {
-  "clean-ts": "false positive test",
   "rust-metrics": "Rust expertise",
   "huge-ts": "prioritization under load",
   "spaghetti-python": "signal vs noise",
@@ -168,14 +167,13 @@ function buildIssueBody(
           const blockers = t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
           const highs = t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
           const extra = t.extraCount > 0 ? `+${t.extraCount}` : "—";
-          const fp = t.fpCount > 0 ? String(t.fpCount) : "—";
-          const noise = t.noiseCount > 0 ? String(t.noiseCount) : "—";
-          const snr = t.snr !== null ? String(t.snr) : "—";
+          const noise = (t.fpCount > 0 || t.noiseCount > 0) ? String((t.fpCount ?? 0) + (t.noiseCount ?? 0)) : "—";
+          const useful = t.usefulnessScore !== null && t.usefulnessScore !== undefined ? `${t.usefulnessScore}/10` : "—";
           const caught = t.plantedIssuesCaught?.length ?? 0;
           const depth = caught > 0
             ? `${t.explainedCount ?? 0}/${caught}${(t.fixSuggestedCount ?? 0) > 0 ? ` (✓${t.fixSuggestedCount})` : ""}`
             : "—";
-          return `| ${name} | **${t.rating}** | ${blockers} | ${highs} | ${extra} | ${fp} | ${noise} | ${snr} | ${depth} |`;
+          return `| ${name} | **${t.rating}** | ${blockers} | ${highs} | ${extra} | ${noise} | ${useful} | ${depth} |`;
         })
         .join("\n");
 
@@ -194,8 +192,8 @@ function buildIssueBody(
       return `### ${label}${prLink}
 *${title}* — ${focus}
 
-| Tool | Rating | Blockers | Highs | Extra | FP | Noise | SNR | Depth |
-|------|--------|----------|-------|-------|----|-------|-----|-------|
+| Tool | Rating | Blockers | Highs | Extra | Noise | Useful | Depth |
+|------|--------|----------|-------|-------|-------|--------|-------|
 ${toolRows}
 
 ${verdicts}`;
