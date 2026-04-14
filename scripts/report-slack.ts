@@ -255,7 +255,8 @@ function buildMainPayload(
 
 function buildScenarioPayload(
   result: ScenarioEvaluation,
-  toolNames: string[]
+  toolNames: string[],
+  prUrl: string
 ): object {
   const emoji = SCENARIO_EMOJI[result.scenarioId] ?? "📋";
   const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
@@ -321,6 +322,13 @@ function buildScenarioPayload(
     });
   }
 
+  if (prUrl) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `<${prUrl}|View PR →>` },
+    });
+  }
+
   return { blocks };
 }
 
@@ -371,6 +379,9 @@ async function main(): Promise<void> {
     }
   }
 
+  interface PrEntry { scenarioId: string; prNumber: number; prUrl: string; }
+  const prs: PrEntry[] = process.env.PR_MATRIX ? JSON.parse(process.env.PR_MATRIX) : [];
+
   const mainPayload = buildMainPayload(results, issueUrl);
   const mainData = await postToSlack(token, { channel, ...mainPayload });
   if (!mainData.ok) {
@@ -387,7 +398,8 @@ async function main(): Promise<void> {
   const toolNames = Object.keys(results[0].perTool);
 
   for (const result of results) {
-    const scenarioPayload = buildScenarioPayload(result, toolNames);
+    const prUrl = prs.find((p) => p.scenarioId === result.scenarioId)?.prUrl ?? "";
+    const scenarioPayload = buildScenarioPayload(result, toolNames, prUrl);
     const scenarioData = await postToSlack(token, {
       channel,
       thread_ts: threadTs,

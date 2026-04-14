@@ -246,7 +246,6 @@ async function fetchPrComments(
   ]);
 
   const comments: ToolComment[] = [];
-
   for (const c of reviewComments) {
     const tool = loginToTool.get(c.user?.login ?? "");
     if (tool) comments.push({ tool, body: c.body, path: c.path, line: c.line ?? c.original_line ?? undefined, createdAt: c.created_at, isReview: true });
@@ -271,13 +270,11 @@ function computeToolStats(
 
   for (const tool of tools) {
     const comments = toolComments.filter((c) => c.tool === tool.name);
-    if (comments.length === 0) { stats.set(tool.name, { commentCount: 0, responseTimeSec: null }); continue; }
-    const reviewComments = comments.filter((c) => c.isReview);
-    const firstReviewMs = reviewComments.length > 0
-      ? reviewComments.map((c) => new Date(c.createdAt).getTime()).sort((a, b) => a - b)[0]
-      : null;
+    const inlineComments = comments.filter((c) => c.isReview);
+    if (inlineComments.length === 0) { stats.set(tool.name, { commentCount: 0, responseTimeSec: null }); continue; }
+    const firstReviewMs = inlineComments.map((c) => new Date(c.createdAt).getTime()).sort((a, b) => a - b)[0];
     stats.set(tool.name, {
-      commentCount: comments.length,
+      commentCount: inlineComments.length,
       responseTimeSec: firstReviewMs === null ? null : Math.round((firstReviewMs - prCreatedMs) / 1000),
     });
   }
@@ -316,15 +313,18 @@ function buildToolSections(tools: Tool[], toolComments: ToolComment[]): string {
   }
   return tools.map((tool) => {
     const comments = commentsByTool.get(tool.name) ?? [];
+    const inlineComments = comments.filter((c) => c.isReview);
     if (comments.length === 0) return `<tool name="${tool.name}">\nNo comments posted.\n</tool>`;
+    if (inlineComments.length === 0) return `<tool name="${tool.name}" commentCount="0">\n[SUMMARY only — no inline review comments]\n\n${comments.map((c, i) => `Summary ${i + 1}:\n${c.body}`).join("\n\n---\n\n")}\n</tool>`;
     const commentText = comments
       .map((c, i) => {
         const lineSuffix = c.line ? `:${c.line}` : "";
         const location = c.path ? ` [${c.path}${lineSuffix}]` : "";
-        return `Comment ${i + 1}${location}:\n${c.body}`;
+        const label = c.isReview ? `[INLINE]` : `[SUMMARY]`;
+        return `Comment ${i + 1} ${label}${location}:\n${c.body}`;
       })
       .join("\n\n---\n\n");
-    return `<tool name="${tool.name}" commentCount="${comments.length}">\n${commentText}\n</tool>`;
+    return `<tool name="${tool.name}" commentCount="${inlineComments.length}">\n${commentText}\n</tool>`;
   }).join("\n\n");
 }
 
@@ -372,7 +372,8 @@ Study the diff yourself before looking at tool comments. Form your own view of t
 **Step 2 — Evaluate each tool's comments.**
 - A tool catches a planted issue if it correctly identifies the underlying problem. Be strict: vague mentions without identifying the actual bug don't count. Record caught issues as their 0-based index.
 - If a tool flags something NOT in the planted list: verify against the diff. If real, count as extra (blocker/high severity) or medium (valid but less critical). Only count as FP if you verified the code is actually correct.
-- Noise = technically valid but a human would wave off: style nitpicks, trivial naming, obvious-from-context observations.
+- Noise = technically valid but a human would wave off: style nitpicks, trivial naming, obvious-from-context observations. Only count FP/noise from [INLINE] comments — [SUMMARY] comments are informational overviews and should not be penalized for noise even if they mention obvious things.
+- A tool with only [SUMMARY] comments and no [INLINE] comments did not perform an inline review — treat it as silent (commentCount=0 in the stats header).
 
 **Step 3 — Assess usefulness.**
 Would a developer find this tool's review genuinely helpful? Rate 0–10: clarity, explanation quality, actionability, proportionality (focused on what matters). Null if tool didn't comment.
