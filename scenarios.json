@@ -126,6 +126,22 @@
       {
         "severity": "high",
         "description": "getPaymentSuccessRate and getPaymentReconciliationReport filter payments by status === 'completed' but the PaymentStatus enum has no 'completed' value — the correct value is 'captured', so successful payments are never counted and success rate always reports 0%"
+      },
+      {
+        "severity": "high",
+        "description": "XSS in generateSalesSummaryHtml: p.name interpolated directly into HTML table cells without escaping — a product name containing HTML/script tags executes in the browser"
+      },
+      {
+        "severity": "high",
+        "description": "getUserAnalytics favoriteCategory counts by item.productName instead of item.category — the 'favorite category' field always returns a product name, not a category"
+      },
+      {
+        "severity": "high",
+        "description": "require('path') and require('fs') used inside a function in exportService — the project uses ES modules (import syntax), so require is not defined and throws ReferenceError at runtime when that code path is hit"
+      },
+      {
+        "severity": "smell",
+        "description": "getSharedReport uses loose equality e.token == token for string comparison — should use === (eqeqeq violation, acknowledged with eslint-disable comment)"
       }
     ]
   },
@@ -189,6 +205,26 @@
       {
         "severity": "high",
         "description": "score_user() falls back to random.random() when model.predict() throws — silently returns a random float as a real ML score, causing nonsensical risk classifications for any user whose features the model can't handle"
+      },
+      {
+        "severity": "high",
+        "description": "run_full_analytics() cache key is str(start)+str(end)+str(dims) — ignores filters, extra_filters, agg, sort, limit, offset, so different queries with the same date range and dims return stale cached results"
+      },
+      {
+        "severity": "high",
+        "description": "compute_ltv() cache key omits include_refunds and segment — calling with include_refunds=False or a segment multiplier returns the same cached value as a prior call with different settings, silently producing wrong LTV figures"
+      },
+      {
+        "severity": "high",
+        "description": "compute_ltv() calls r.get('type') on a sqlite3.Row object — sqlite3.Row has no .get() method, raises AttributeError caught by bare except: pass, so include_refunds never applies and LTV is always computed without refund deductions"
+      },
+      {
+        "severity": "high",
+        "description": "compute_segment_analysis() divides by (n - 1) for variance — crashes with ZeroDivisionError when a segment has exactly one data point, which is possible when min_size=1"
+      },
+      {
+        "severity": "high",
+        "description": "compute_segment_analysis() accepts a confidence parameter (default 0.95) but always uses hardcoded 1.96 as the z-value — confidence is silently ignored, producing wrong confidence intervals for any value other than 0.95"
       }
     ]
   },

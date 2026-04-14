@@ -19,6 +19,8 @@ interface ToolRating {
   blockersTotal: number;
   highsCaught: number;
   highsTotal: number;
+  smellsCaught: number;
+  smellsTotal: number;
   extraCount: number;
   mediumCount: number;
   fpCount: number;
@@ -166,6 +168,7 @@ function buildIssueBody(
           if (!t) return `| ${name} | ? | — | — | — | — | — | — | — |`;
           const blockers = t.blockersTotal > 0 ? `${t.blockersCaught}/${t.blockersTotal}` : "—";
           const highs = t.highsTotal > 0 ? `${t.highsCaught}/${t.highsTotal}` : "—";
+          const smells = t.smellsTotal > 0 ? `${t.smellsCaught}/${t.smellsTotal}` : "—";
           const extra = t.extraCount > 0 ? `+${t.extraCount}` : "—";
           const noise = (t.fpCount > 0 || t.noiseCount > 0) ? String((t.fpCount ?? 0) + (t.noiseCount ?? 0)) : "—";
           const useful = t.usefulnessScore !== null && t.usefulnessScore !== undefined ? `${t.usefulnessScore}/10` : "—";
@@ -173,7 +176,8 @@ function buildIssueBody(
           const depth = caught > 0
             ? `${t.explainedCount ?? 0}/${caught}${(t.fixSuggestedCount ?? 0) > 0 ? ` (✓${t.fixSuggestedCount})` : ""}`
             : "—";
-          return `| ${name} | **${t.rating}** | ${blockers} | ${highs} | ${extra} | ${noise} | ${useful} | ${depth} |`;
+          const speed = t.responseTimeSec !== null && t.responseTimeSec !== undefined ? `${t.responseTimeSec}s` : "—";
+          return `| ${name} | **${t.rating}** | ${blockers} | ${highs} | ${smells} | ${extra} | ${noise} | ${useful} | ${depth} | ${speed} |`;
         })
         .join("\n");
 
@@ -192,8 +196,8 @@ function buildIssueBody(
       return `### ${label}${prLink}
 *${title}* — ${focus}
 
-| Tool | Rating | Blockers | Highs | Extra | Noise | Useful | Depth |
-|------|--------|----------|-------|-------|-------|--------|-------|
+| Tool | Rating | Blockers | Highs | Smells | Extra | Noise | Useful | Depth | Speed |
+|------|--------|----------|-------|--------|-------|-------|--------|-------|-------|
 ${toolRows}
 
 ${verdicts}`;

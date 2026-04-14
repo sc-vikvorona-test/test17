@@ -147,6 +147,8 @@ export interface ToolRating {
   blockersTotal: number;
   highsCaught: number;
   highsTotal: number;
+  smellsCaught: number;
+  smellsTotal: number;
   extraCount: number;
   mediumCount: number;
   fpCount: number;
@@ -672,6 +674,8 @@ async function evaluateScenario(
 
       const blockersCaught = caughtIndices.filter((i) => scenario.plantedIssues[i].severity === "blocker").length;
       const highsCaught = caughtIndices.filter((i) => scenario.plantedIssues[i].severity === "high").length;
+      const smellsCaught = caughtIndices.filter((i) => scenario.plantedIssues[i].severity === "smell").length;
+      const smellsTotal = scenario.plantedIssues.filter((i) => i.severity === "smell").length;
 
       const caughtByCategory: Record<string, number> = {};
       for (const i of caughtIndices) {
@@ -697,6 +701,8 @@ async function evaluateScenario(
         blockersTotal,
         highsCaught: Math.min(highsCaught, highsTotal),
         highsTotal,
+        smellsCaught: Math.min(smellsCaught, smellsTotal),
+        smellsTotal,
         extraCount: ar.extraCount ?? 0,
         mediumCount: ar.mediumCount ?? 0,
         fpCount: ar.fpCount ?? 0,
@@ -752,6 +758,7 @@ function makeFallbackRating(
     noiseAssessment: "unknown",
     blockersCaught: 0, blockersTotal,
     highsCaught: 0, highsTotal,
+    smellsCaught: 0, smellsTotal: scenario.plantedIssues.filter((i) => i.severity === "smell").length,
     extraCount: 0, mediumCount: 0, fpCount: 0, noiseCount: 0,
     snr: null,
     usefulnessScore: null,

@@ -18,6 +18,8 @@ interface ToolRating {
   blockersTotal: number;
   highsCaught: number;
   highsTotal: number;
+  smellsCaught: number;
+  smellsTotal: number;
   extraCount: number;
   mediumCount: number;
   fpCount: number;
@@ -122,6 +124,18 @@ function formatNoise(t: ToolRating): string {
   if (t.commentCount === 0) return "—";
   const n = (t.fpCount ?? 0) + (t.noiseCount ?? 0);
   return n === 0 ? "0" : String(n);
+}
+
+/** Smells display: X/Y or — when no smells planted. */
+function formatSmells(t: ToolRating): string {
+  if (t.smellsTotal === 0) return "—";
+  return `${t.smellsCaught}/${t.smellsTotal}`;
+}
+
+/** Speed display: Xs or — when unknown. */
+function formatSpeed(t: ToolRating): string {
+  if (t.responseTimeSec === null || t.responseTimeSec === undefined) return "—";
+  return `${t.responseTimeSec}s`;
 }
 
 /** Usefulness display: score/10 or — when tool didn't comment. */
@@ -262,17 +276,17 @@ function buildScenarioPayload(
   const label = SCENARIO_SHORT[result.scenarioId] ?? result.scenarioId;
   const focus = SCENARIO_FOCUS[result.scenarioId] ?? "";
 
-  // 7-column table: Tool | Grade | Recall | Extra | Noise | Depth | Useful
-  const header = ["Tool", "Grade", "Recall", "Extra", "Noise", "Depth", "Useful"];
+  // 9-column table: Tool | Grade | Recall | Smells | Extra | Noise | Depth | Useful | Speed
+  const header = ["Tool", "Grade", "Recall", "Smells", "Extra", "Noise", "Depth", "Useful", "Speed"];
   const rows: string[][] = toolNames.map((name) => {
     const t = result.perTool[name];
-    if (!t) return [name, "?", "—", "—", "—", "—", "—"];
+    if (!t) return [name, "?", "—", "—", "—", "—", "—", "—", "—"];
     const caught = (t.plantedIssuesCaught ?? []).length;
     const depth = caught > 0
       ? `${t.explainedCount ?? 0}/${caught}${(t.fixSuggestedCount ?? 0) > 0 ? ` ✓${t.fixSuggestedCount}` : ""}`
       : "—";
     const extra = (t.extraCount ?? 0) > 0 ? `+${t.extraCount}` : "—";
-    return [name, `${ratingEmoji(t.rating)} ${t.rating}`, recallPct(t), extra, formatNoise(t), depth, formatUsefulness(t)];
+    return [name, `${ratingEmoji(t.rating)} ${t.rating}`, recallPct(t), formatSmells(t), extra, formatNoise(t), depth, formatUsefulness(t), formatSpeed(t)];
   });
 
   // Best tool by recall among those that commented
