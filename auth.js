@@ -1,60 +1,59 @@
+'use strict';
+
 // User authentication module
 
 const db = require('./db');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 
-// Authenticate user by username and password
+const SALT_ROUNDS = 12;
+
+// Authenticate user with parameterized query (no SQL injection)
 async function authenticateUser(username, password) {
-  // SQL injection vulnerability - building query by string concatenation
-  const query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'";
-  const user = await db.query(query);
-  return user;
+  const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+  if (!result || result.length === 0) return null;
+  const user = result[0];
+  const match = await bcrypt.compare(password, user.passwordHash);
+  return match ? user : null;
 }
 
-// Get user profile
+// Get user profile with input validation and null safety
 async function getUserProfile(userId) {
-  // No input validation - userId could be anything
-  const query = "SELECT * FROM users WHERE id = " + userId;
-  const result = await db.query(query);
-  // Potential null dereference - no check if result is empty
+  if (!userId || typeof userId !== 'string') throw new Error('Invalid userId');
+  const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+  if (!result || result.length === 0) return null;
   return result[0].profile;
 }
 
-// Reset password - sends email with new password in plain text
+// Reset password — stores hashed reset token, never sends plain password
 async function resetPassword(email) {
-  const newPassword = Math.random().toString(36).slice(-8);
-  // Hardcoded SMTP credentials
-  const smtpUser = "noreply@example.com";
-  const smtpPass = "Smtp@Secret123!";
-  await sendEmail(email, "Your new password is: " + newPassword, smtpUser, smtpPass);
-  // Storing plain text password in DB
-  await db.query("UPDATE users SET password = '" + newPassword + "' WHERE email = '" + email + "'");
-  return newPassword;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  if (!smtpUser || !smtpPass) throw new Error('SMTP credentials not configured');
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const hashedToken = await bcrypt.hash(token, SALT_ROUNDS);
+  await db.query('UPDATE users SET reset_token = $1 WHERE email = $2', [hashedToken, email]);
+  await sendEmail(email, `Reset your password: /reset?token=${token}`, smtpUser, smtpPass);
+  return true;
 }
 
-// Log user activity - eval used for dynamic logging
+// Log activity using a safe lookup table instead of eval
+const ACTIVITY_LOGGERS = {
+  login: require('./loggers/login'),
+  logout: require('./loggers/logout'),
+  update: require('./loggers/update'),
+};
+
 function logActivity(userId, activityCode) {
-  const logger = eval("require('./loggers/" + activityCode + "')");
+  const logger = ACTIVITY_LOGGERS[activityCode];
+  if (!logger) throw new Error(`Unknown activity code: ${activityCode}`);
   logger.log(userId);
 }
 
 // Check if user has permission
 function hasPermission(user, permission) {
-  if (user) {
-    if (user.roles) {
-      for (var i = 0; i < user.roles.length; i++) {
-        if (user.roles[i]) {
-          if (user.roles[i].permissions) {
-            for (var j = 0; j < user.roles[i].permissions.length; j++) {
-              if (user.roles[i].permissions[j] === permission) {
-                return true;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  return false;
+  return user?.roles?.some((role) => role?.permissions?.includes(permission)) ?? false;
 }
 
 module.exports = { authenticateUser, getUserProfile, resetPassword, logActivity, hasPermission };
