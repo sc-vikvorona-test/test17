@@ -6,7 +6,7 @@ function capitalize(str) {
 }
 
 function camelToKebab(str) {
-  return str.replace(/([A-Z])/g, '-$1').toLowerCase();
+  return str.replace(/([A-Z])/g, (_, c, offset) => (offset > 0 ? '-' : '') + c.toLowerCase());
 }
 
 function kebabToCamel(str) {
@@ -16,6 +16,7 @@ function kebabToCamel(str) {
 function truncate(str, maxLength, suffix) {
   const end = suffix !== undefined ? suffix : '...';
   if (str.length <= maxLength) return str;
+  if (maxLength <= end.length) return end.slice(0, maxLength);
   return str.slice(0, maxLength - end.length) + end;
 }
 
@@ -48,7 +49,7 @@ function slugify(str) {
   return str
     .toLowerCase()
     .trim()
-    .replace(/[^\w\s-]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-');
 }
