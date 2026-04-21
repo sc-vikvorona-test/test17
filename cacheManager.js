@@ -129,6 +129,7 @@ CacheNamespace.prototype.has = function(key) {
   if (!entry) return false;
   if (entry.isExpired()) {
     this._delete(key);
+    this.stats.expirations++;
     return false;
   }
   return true;

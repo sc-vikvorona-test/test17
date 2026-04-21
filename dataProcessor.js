@@ -241,7 +241,7 @@ function stageFilter(records, rules) {
   return filterRecords(records, function(record) {
     for (var i = 0; i < rules.length; i++) {
       var rule = rules[i];
-      if (rule.field && rule.value) {
+      if (rule.field !== undefined && rule.value !== undefined) {
         if (record[rule.field] !== rule.value) return false;
       }
       if (rule.fn && !rule.fn(record)) return false;
@@ -302,23 +302,29 @@ BatchProcessor.prototype.process = async function(records) {
     var chunk = records.slice(offset, offset + this.batchSize);
     attempt = 0;
 
+    var chunkFailed = false;
     while (attempt < this.maxRetries) {
       try {
         var result = await this._processChunk(chunk);
         allResults.push(result);
+        chunkFailed = false;
         break;
       } catch (err) {
         attempt++;
-        this.stats.failed += chunk.length;
+        chunkFailed = true;
         this.emitter.emit('error', { error: err, attempt: attempt, chunk: chunk });
         if (attempt < this.maxRetries) {
           await sleep(RETRY_DELAY_MS * attempt);
         }
       }
     }
+    if (chunkFailed) {
+      this.stats.failed += chunk.length;
+      this.status = STATUS_FAILED;
+    }
   }
 
-  this.status = STATUS_DONE;
+  if (this.status !== STATUS_FAILED) this.status = STATUS_DONE;
   this.emitter.emit('done', { stats: this.stats, results: allResults });
   return allResults;
 };
