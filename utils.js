@@ -6,3 +6,4 @@ function trackClick(element) {
 function getHistory() { return history; }
 module.exports = { trackClick, getHistory };
 // variant 7
+// improvement: add clear function - 7
