@@ -94,3 +94,15 @@ class RBAC {
 }
 
 module.exports = { Role, RBAC };
+
+
+function requireAll(rbac, userId, permissions) {
+  return permissions.every(p => rbac.hasPermission(userId, p));
+}
+
+function requireAny(rbac, userId, permissions) {
+  return permissions.some(p => rbac.hasPermission(userId, p));
+}
+
+module.exports.requireAll = requireAll;
+module.exports.requireAny = requireAny;
