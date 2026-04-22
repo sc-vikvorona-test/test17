@@ -1,58 +1,79 @@
-// Utility functions with intentional sonar issues
+/**
+ * Utility functions - refactored with improved error handling
+ */
 
-var password = "super-secret-abc123"; // hardcoded credential (ignored - not fixing)
-
-function processUser(user) {
-  var x = user.name; // unused var (ignored - not fixing)
-  console.log(user.email); // console.log (ignored - not fixing)
-  // eval(user.code) -- FIXED: removed dangerous eval
-  return user;
+function formatCurrency(amount, currency = 'USD', locale = 'en-US') {
+  if (typeof amount !== 'number' || isNaN(amount)) throw new TypeError('Amount must be a valid number');
+  return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(amount);
 }
 
-function riskyDiv(a, b) {
-  return a / b; // no zero check (ignored - not fixing)
+function debounce(fn, delay) {
+  if (typeof fn !== 'function') throw new TypeError('First argument must be a function');
+  if (typeof delay !== 'number' || delay < 0) throw new TypeError('Delay must be a non-negative number');
+  let timer;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), delay);
+  };
 }
 
-// Cognitive complexity issue - deeply nested (ignored)
-function processData(data) {
-  if (data) {
-    if (data.items) {
-      for (var i = 0; i < data.items.length; i++) {
-        if (data.items[i]) {
-          if (data.items[i].active) {
-            if (data.items[i].value > 0) {
-              if (data.items[i].value < 100) {
-                return data.items[i].value * 2;
-              }
-            }
-          }
-        }
-      }
+function throttle(fn, limit) {
+  let lastCall = 0;
+  return function(...args) {
+    const now = Date.now();
+    if (now - lastCall >= limit) {
+      lastCall = now;
+      return fn.apply(this, args);
     }
-  }
-  return 0;
+  };
 }
 
-// Duplicate block 1 (ignored)
-function transform1(arr) {
-  var result = [];
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i] > 0) {
-      result.push(arr[i] * 2);
-    }
-  }
-  return result;
+function groupBy(arr, key) {
+  if (!Array.isArray(arr)) throw new TypeError('First argument must be an array');
+  return arr.reduce((groups, item) => {
+    const groupKey = typeof key === 'function' ? key(item) : item[key];
+    (groups[groupKey] = groups[groupKey] || []).push(item);
+    return groups;
+  }, {});
 }
 
-// Duplicate block 2 (identical logic, ignored)
-function transform2(arr) {
-  var result = [];
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i] > 0) {
-      result.push(arr[i] * 2);
-    }
-  }
-  return result;
+function deepClone(obj) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (obj instanceof Date) return new Date(obj.getTime());
+  if (Array.isArray(obj)) return obj.map(deepClone);
+  return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, deepClone(v)]));
 }
 
-module.exports = { processUser, riskyDiv, processData, transform1, transform2 };
+function omit(obj, keys) {
+  return Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
+}
+
+function pick(obj, keys) {
+  return Object.fromEntries(keys.filter(k => k in obj).map(k => [k, obj[k]]));
+}
+
+function chunk(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function flatten(arr, depth = 1) {
+  return depth === 0 ? arr.slice() : arr.reduce((acc, val) => 
+    acc.concat(Array.isArray(val) ? flatten(val, depth - 1) : val), []);
+}
+
+function unique(arr, key) {
+  if (!key) return [...new Set(arr)];
+  const seen = new Set();
+  return arr.filter(item => {
+    const k = typeof key === 'function' ? key(item) : item[key];
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+module.exports = { formatCurrency, debounce, throttle, groupBy, deepClone, omit, pick, chunk, flatten, unique };
