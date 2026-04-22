@@ -1,58 +1,25 @@
-// Utility functions with intentional sonar issues
+// Utility functions
 
-var password = "super-secret-abc123"; // hardcoded credential (ignored - not fixing)
-
-function processUser(user) {
-  var x = user.name; // unused var (ignored - not fixing)
-  console.log(user.email); // console.log (ignored - not fixing)
-  // eval(user.code) -- FIXED: removed dangerous eval
-  return user;
+function formatCurrency(amount, currency) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
 }
 
-function riskyDiv(a, b) {
-  return a / b; // no zero check (ignored - not fixing)
+function debounce(fn, delay) {
+  let timer;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), delay);
+  };
 }
 
-// Cognitive complexity issue - deeply nested (ignored)
-function processData(data) {
-  if (data) {
-    if (data.items) {
-      for (var i = 0; i < data.items.length; i++) {
-        if (data.items[i]) {
-          if (data.items[i].active) {
-            if (data.items[i].value > 0) {
-              if (data.items[i].value < 100) {
-                return data.items[i].value * 2;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  return 0;
+function groupBy(arr, key) {
+  return arr.reduce((acc, item) => {
+    const group = item[key];
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(item);
+    return acc;
+  }, {});
 }
 
-// Duplicate block 1 (ignored)
-function transform1(arr) {
-  var result = [];
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i] > 0) {
-      result.push(arr[i] * 2);
-    }
-  }
-  return result;
-}
-
-// Duplicate block 2 (identical logic, ignored)
-function transform2(arr) {
-  var result = [];
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i] > 0) {
-      result.push(arr[i] * 2);
-    }
-  }
-  return result;
-}
-
-module.exports = { processUser, riskyDiv, processData, transform1, transform2 };
+module.exports = { formatCurrency, debounce, groupBy };
+// variant 5
