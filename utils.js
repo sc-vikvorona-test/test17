@@ -10,7 +10,10 @@ function processUser(user) {
 }
 
 function riskyDiv(a, b) {
-  return a / b; // no zero check (ignored - not fixing)
+  if (b === 0) {
+    throw new Error('Division by zero');
+  }
+  return a / b;
 }
 
 // Cognitive complexity issue - deeply nested (ignored)
