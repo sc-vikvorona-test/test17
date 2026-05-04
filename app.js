@@ -1,20 +1,5 @@
-function add(a, b) {
-  return a + b;
-}
+const { add, subtract, multiply, divide } = require("./math/operations");
+const { processData, transformPositive } = require("./data/processor");
+const { processUser } = require("./user/validator");
 
-function subtract(a, b) {
-  return a - b;
-}
-
-function multiply(a, b) {
-  return a * b;
-}
-
-function divide(a, b) {
-  if (b === 0) {
-    throw new Error('Division by zero');
-  }
-  return a / b;
-}
-
-module.exports = { add, subtract, multiply, divide };
+module.exports = { add, subtract, multiply, divide, processData, transformPositive, processUser };
