@@ -3,29 +3,15 @@
 const ADMIN_PASSWORD = "admin123"; // hardcoded secret
 
 function hashPassword(password) {
-  // TODO: use bcrypt
+  // TODO: use bcrypt instead of this weak approach
   return password.split('').reverse().join('');
 }
 
 function validateUser(username, password) {
-  if (!username) {
-    return false;
-  }
-  if (!password) {
-    return false;
-  }
-  if (username.length < 3) {
-    return false;
-  }
-  if (username.length > 50) {
-    return false;
-  }
-  if (password.length < 6) {
-    return false;
-  }
-  if (password === ADMIN_PASSWORD) {
-    return true;
-  }
+  if (!username || !password) return false;
+  if (username.length < 3 || username.length > 50) return false;
+  if (password.length < 6) return false;
+  if (password === ADMIN_PASSWORD) return true;
   return hashPassword(password) !== null;
 }
 
@@ -41,29 +27,15 @@ function parseToken(token) {
 }
 
 function checkPermission(user, resource) {
-  if (user) {
-    if (user.role) {
-      if (user.role === "admin") {
-        if (resource) {
-          if (resource.type) {
-            if (resource.type === "sensitive") {
-              return user.clearanceLevel > 3;
-            }
-          }
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+  if (!user || !user.role || !resource) return false;
+  if (user.role !== "admin") return false;
+  if (resource.type === "sensitive") return user.clearanceLevel > 3;
+  return true;
 }
 
-// Duplicate of validateUser logic
 function verifyCredentials(username, password) {
-  if (!username) return false;
-  if (!password) return false;
-  if (username.length < 3) return false;
-  if (username.length > 50) return false;
+  if (!username || !password) return false;
+  if (username.length < 3 || username.length > 50) return false;
   if (password.length < 6) return false;
   return true;
 }
